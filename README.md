@@ -1,1 +1,1 @@
-# superCDN
+# ShaiiiCDN
