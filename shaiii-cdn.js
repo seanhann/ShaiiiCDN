@@ -4,11 +4,27 @@ var buket;
 
 var sendChannel;
 
-tracker.emit('domain', window.location.hostname, function (domain, id) {
+var resource = [];
+var STUN = { urls: 'stun:stun.l.google.com:19302' };
+var servers = { iceServers: STUN};
+var DtlsSrtpKeyAgreement = {
+   DtlsSrtpKeyAgreement: true
+};
+var optional = {
+   optional: [DtlsSrtpKeyAgreement]
+};
+
+localConnections = remoteConnections = {};
+
+tracker.emit('domain', window.location, function (domain, id) {
      buket = io.connect('http://shaiii.com:8080/'+domain);
 
      buket.on('connect', function(){
-	offer();
+	imgs = document.querySelectorAll("img[shaiii-cdn]");
+	for(i=0; i<imgs.length; i++){
+		src = imgs[i].getAttribute('shaiii-cdn');
+		offer(src);
+	}	
      });
 
      buket.on('help', function (data) {
@@ -23,47 +39,50 @@ tracker.emit('domain', window.location.hostname, function (domain, id) {
       	addIce(data);
      });
 
-     buket.on('loadFromServer', function(){
-	load();	
+     buket.on('loadFromServer', function(uri){
+	load(uri);	
      });
 });
 
 
-STUN = { urls: 'stun:stun.l.google.com:19302' };
-servers = { iceServers: STUN};
-DtlsSrtpKeyAgreement = {
-   DtlsSrtpKeyAgreement: true
-};
-optional = {
-   optional: [DtlsSrtpKeyAgreement]
-};
 
-receiveBuffer = [];
-function offer() {
+var Receiver = function(uri){
+	this.uri = uri;
+	this.buffer = [];
+
+	this.receive = function(data){
+		this.buffer.push(data);	
+		if(data.byteLength != 65664){
+			var received = new window.Blob(this.buffer);
+
+			this.buffer = [];
+
+			url= URL.createObjectURL(received);
+			document.querySelector('img[shaiii-cdn="'+this.uri+'"]').src = url;
+		}
+	}		
+}
+
+function offer(uri) {
   console.log('startOffer:'+Date.now());
-  window.localConnection = localConnection = new RTCPeerConnection(STUN, optional);
+  localConnections[uri] = new RTCPeerConnection(STUN, optional);
 
-  sendChannel = localConnection.createDataChannel('sendDataChannel');
+  receiver = new Receiver(uri); 
+
+  sendChannel = localConnections[uri].createDataChannel('sendDataChannel');
   sendChannel.binaryType = 'arraybuffer';
   sendChannel.onopen = onSendChannelStateChange;
   sendChannel.onclose = onSendChannelStateChange;
   sendChannel.onmessage = function (event) {
   	console.log('receive first byte:'+Date.now());
-	receiveBuffer.push(event.data);
-	if(event.data.byteLength != 65664){
-		var received = new window.Blob(receiveBuffer);
-		receiveBuffer = [];
-
-		url= URL.createObjectURL(received);
-		setTimeout(function(){ document.querySelector('img').src = url; }, 500);
-	}
+	receiver.receive(event.data);
   	//console.log("received: " + event.data);
   };
 
-  localConnection.createOffer().then(
+  localConnections[uri].createOffer().then(
     function(desc){
-  	localConnection.setLocalDescription(desc);
-	buket.emit('help', desc);	
+  	localConnections[uri].setLocalDescription(desc);
+	buket.emit('help', uri, desc);	
     },
     function(error){
          console.log(error);
@@ -72,34 +91,34 @@ function offer() {
 }
 
 function acceptAnswer(data){
-  	window.localConnection.onicecandidate = function(e) {
-	      if(e.candidate) buket.emit('ice', data.id, e.candidate);
+  	localConnections[data.uri].onicecandidate = function(e) {
+	      if(e.candidate) buket.emit('ice', {id:data.id, uri:data.uri,flag:0, candidate:e.candidate});
   	};
-  	window.localConnection.setRemoteDescription(data.desc);
+  	localConnections[data.uri].setRemoteDescription(data.desc);
 }
 
 function answer(data){
   id = data.id;
   desc = data.desc;
 
-  window.remoteConnection = remoteConnection = new RTCPeerConnection(STUN, optional);
+  remoteConnections[data.uri] = new RTCPeerConnection(STUN, optional);
 
-  remoteConnection.onicecandidate = function(e) {
-	if(e.candidate) buket.emit('ice',id , e.candidate);
+  remoteConnections[data.uri].onicecandidate = function(e) {
+	if(e.candidate) buket.emit('ice',{id: id, uri:data.uri, flag:1, candidate: e.candidate});
   };
   
   desc = new RTCSessionDescription(desc);
-  remoteConnection.setRemoteDescription(desc);
-  remoteConnection.createAnswer().then(
+  remoteConnections[data.uri].setRemoteDescription(desc);
+  remoteConnections[data.uri].createAnswer().then(
     function(desc){
-	remoteConnection.setLocalDescription(desc);
-	buket.emit('answer', id, desc);	
+	remoteConnections[data.uri].setLocalDescription(desc);
+	buket.emit('answer', id, desc, data.uri);	
     },
     function(error){
 	alert(error);
     } 
   );
-  remoteConnection.ondatachannel = function(event){ 
+  remoteConnections[data.uri].ondatachannel = function(event){ 
 	receiveChannel = event.channel;
   	receiveChannel.binaryType = 'arraybuffer';
 	receiveChannel.onmessage = function(e){
@@ -115,7 +134,12 @@ function answer(data){
 }
 
 function addIce(data){
-	connection = window.localConnection ? window.localConnection : window.remoteConnection;
+	if(data.flag){
+		connection = localConnections[data.uri];
+	}else{
+		connection = window.remoteConnection;
+	}
+	//connection = window.localConnection ? window.localConnection : window.remoteConnection;
 	connection.addIceCandidate(data.candidate);
 }
 
@@ -134,15 +158,15 @@ function reDraw(){
 
 var blob;
 
-function load(){
+function load(uri){
 	var oReq = new XMLHttpRequest();
-	oReq.open("GET", "/nothing.ico", true);
+	oReq.open("GET", uri, true);
 	oReq.responseType = "blob";
 	
 	oReq.onload = function(oEvent) {
 	  blob = oReq.response;
 	  var url = URL.createObjectURL(blob); 
-	  document.querySelector('img').src = url;
+	  document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
 	  /*
 	  window.webkitRequestFileSystem(window.TEMPORARY, blob.size, function(localstorage){
   		localstorage.root.getFile("image1", {create: true}, function(DatFile) {
