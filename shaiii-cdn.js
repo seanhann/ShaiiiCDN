@@ -1,185 +1,231 @@
-var tracker = io.connect('http://shaiii.com:8080');
+var begin = Date.now();
+console.log('begin:'+begin);
 
-var buket;
+var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
 
-var sendChannel;
-
-var resource = [];
-var STUN = { urls: 'stun:stun.l.google.com:19302' };
-var servers = { iceServers: STUN};
-var DtlsSrtpKeyAgreement = {
-   DtlsSrtpKeyAgreement: true
-};
-var optional = {
-   optional: [DtlsSrtpKeyAgreement]
-};
-
-localConnections = remoteConnections = {};
-
-tracker.emit('domain', window.location, function (domain, id) {
-     buket = io.connect('http://shaiii.com:8080/'+domain);
-
-     buket.on('connect', function(){
-	imgs = document.querySelectorAll("img[shaiii-cdn]");
-	for(i=0; i<imgs.length; i++){
-		src = imgs[i].getAttribute('shaiii-cdn');
-		offer(src);
-	}	
-     });
-
-     buket.on('help', function (data) {
-      	answer(data);
-     });
-
-     buket.on('answer', function (data) {
-      	acceptAnswer(data);
-     });
-
-     buket.on('ice', function (data) {
-      	addIce(data);
-     });
-
-     buket.on('loadFromServer', function(uri){
-	load(uri);	
-     });
-});
-
-
-
-var Receiver = function(uri){
-	this.uri = uri;
-	this.buffer = [];
-
-	this.receive = function(data){
-		this.buffer.push(data);	
-		if(data.byteLength != 65664){
-			var received = new window.Blob(this.buffer);
-
-			this.buffer = [];
-
-			url= URL.createObjectURL(received);
-			document.querySelector('img[shaiii-cdn="'+this.uri+'"]').src = url;
-		}
-	}		
-}
-
-function offer(uri) {
-  console.log('startOffer:'+Date.now());
-  localConnections[uri] = new RTCPeerConnection(STUN, optional);
-
-  receiver = new Receiver(uri); 
-
-  sendChannel = localConnections[uri].createDataChannel('sendDataChannel');
-  sendChannel.binaryType = 'arraybuffer';
-  sendChannel.onopen = onSendChannelStateChange;
-  sendChannel.onclose = onSendChannelStateChange;
-  sendChannel.onmessage = function (event) {
-  	console.log('receive first byte:'+Date.now());
-	receiver.receive(event.data);
-  	//console.log("received: " + event.data);
-  };
-
-  localConnections[uri].createOffer().then(
-    function(desc){
-  	localConnections[uri].setLocalDescription(desc);
-	buket.emit('help', uri, desc);	
-    },
-    function(error){
-         console.log(error);
-    } 
-  );
-}
-
-function acceptAnswer(data){
-  	localConnections[data.uri].onicecandidate = function(e) {
-	      if(e.candidate) buket.emit('ice', {id:data.id, uri:data.uri,flag:0, candidate:e.candidate});
-  	};
-  	localConnections[data.uri].setRemoteDescription(data.desc);
-}
-
-function answer(data){
-  id = data.id;
-  desc = data.desc;
-
-  remoteConnections[data.uri] = new RTCPeerConnection(STUN, optional);
-
-  remoteConnections[data.uri].onicecandidate = function(e) {
-	if(e.candidate) buket.emit('ice',{id: id, uri:data.uri, flag:1, candidate: e.candidate});
-  };
-  
-  desc = new RTCSessionDescription(desc);
-  remoteConnections[data.uri].setRemoteDescription(desc);
-  remoteConnections[data.uri].createAnswer().then(
-    function(desc){
-	remoteConnections[data.uri].setLocalDescription(desc);
-	buket.emit('answer', id, desc, data.uri);	
-    },
-    function(error){
-	alert(error);
-    } 
-  );
-  remoteConnections[data.uri].ondatachannel = function(event){ 
-	receiveChannel = event.channel;
-  	receiveChannel.binaryType = 'arraybuffer';
-	receiveChannel.onmessage = function(e){
-		console.log(e);
-        }
-	var reader = new FileReader();
-	reader.addEventListener("loadend", function() {
-	   	//reader.result contains the contents of blob as a typed array
-		receiveChannel.send(reader.result);
-	});
-	reader.readAsArrayBuffer(blob);
-  };
-}
-
-function addIce(data){
-	if(data.flag){
-		connection = localConnections[data.uri];
-	}else{
-		connection = window.remoteConnection;
+Hash = (function(){
+	function hash(blob){
+		var reader = new FileReader();
+		reader.onloadend = function(evt) {
+		  	if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+		  	  	var wordArray = CryptoJS.lib.WordArray.create(evt.target.result);
+		  	  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
+				console.log(hash.toString(CryptoJS.enc.Hex));
+		  	}
+		};
+		reader.readAsArrayBuffer( blob );
 	}
-	//connection = window.localConnection ? window.localConnection : window.remoteConnection;
-	connection.addIceCandidate(data.candidate);
-}
+	return hash;
+})();
 
+WebRTC = (function(){
+	function webrtc(stun, optional){
+		this.stun = stun;
+		this.optional = optional;
+		this.init();
+	}
 
-function onSendChannelStateChange() {
-  var readyState = sendChannel.readyState;
-  console.log('Send channel state is: ' + readyState);
-}
-
-
-function reDraw(){
-	var replaceChars={ "&lt;":"<" , "&gt;":">" };
-	html = document.getElementsByTagName('plaintext')[0].innerHTML.replace(/&lt;|&gt;/g,function(match) {return replaceChars[match];});
-	document.getElementsByTagName('body')[0].innerHTML = html;
-}
-
-var blob;
-
-function load(uri){
-	var oReq = new XMLHttpRequest();
-	oReq.open("GET", uri, true);
-	oReq.responseType = "blob";
+	webrtc.prototype.init = function(){
+		if(!this.connection){
+			this.connection = new RTCPeerConnection(this.stun, this.optional);
+		}
+	}
 	
-	oReq.onload = function(oEvent) {
-	  blob = oReq.response;
-	  var url = URL.createObjectURL(blob); 
-	  document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
-	  /*
-	  window.webkitRequestFileSystem(window.TEMPORARY, blob.size, function(localstorage){
-  		localstorage.root.getFile("image1", {create: true}, function(DatFile) {
-		//blob.close();
-  		  DatFile.createWriter(function(DatContent) {
-  		    DatContent.write(blob);
-	  	    document.querySelector('img').src = DatFile.toURL();
-  		  });
-  		});	
-	  });
-	  */
-	};
-	
-	oReq.send();
+	webrtc.prototype.dataChannelStateChange = function(){
+  		var readyState = sendChannel.readyState;
+  		console.log('Send channel state is: ' + readyState);
+	}
+
+	webrtc.prototype.message = function(){
+  		console.log('receive first byte:'+Date.now());
+	}
+
+	webrtc.prototype.error = function(error){
+		console.log(error);
+	}
+
+	webrtc.prototype.offer = function(fn){
+		if(!this.dataChannel){
+			dataChannel = this.connection.createDataChannel('dataChannel');
+			dataChannel.binaryType = 'arraybuffer';
+			dataChannel.onopen = this.dataChannelStateChange;
+			dataChannel.onclose = this.dataChannelStateChange;
+			dataChannel.onmessage = this.message;
+			this.dataChannel=dataChannel; 
+		}
+		var that = this;	
+  		this.connection.createOffer().then(
+  			function(desc){
+  			      	that.connection.setLocalDescription(desc);
+				fn(desc);	
+  			},this.error
+  		);
+	}
+
+	webrtc.prototype.setRemoteDescription = function(desc){
+		this.connection.setRemoteDescription(desc);
+	}
+
+	webrtc.prototype.ice = function(iceFun){
+		this.connection.onicecandidate = function(e){
+			if(e.candidate){
+				iceFun(e.candidate)	
+			}
+		}
+	}
+
+	webrtc.prototype.answer = function(remoteDesc, blob, answerFun){
+
+  		var rDesc = new RTCSessionDescription(remoteDesc);
+  		this.setRemoteDescription(rDesc);
+  		this.connection.createAnswer().then(
+			function(desc){
+				this.connection.setLocalDescription(desc);
+				answerFun(desc);
+			},
+			function(error){
+				alert(error);
+			}
+		);
+
+  		this.connection.ondatachannel = function(event){ 
+  			this.dataChannel = event.channel;
+  			this.dataChannel.binaryType = 'arraybuffer';
+  			this.dataChannel.onmessage = this.message; 
+  		};
+
+	}
+
+	webrtc.prototype.send = function(blob){
+		 var channel = this.dataChannel;
+  		 var reader = new FileReader();
+  		 reader.addEventListener("loadend", function() {
+  		 	channel.send(reader.result);
+  		 });
+  		 reader.readAsArrayBuffer(blob);
+	}
+
+	return webrtc;
+})();
+
+
+Factory = function(){
+	this.stun = { urls: 'stun:stun.l.google.com:19302' };
+	this.servers = { iceServers: this.stun};
+	this.DtlsSrtpKeyAgreement = { DtlsSrtpKeyAgreement: true };
+	this.optional = { optional: [this.DtlsSrtpKeyAgreement] };
+	this.list = [];
 }
-//window.onload = reDraw;
+
+Factory.prototype.get = function(name){
+	if(!this.list[name]){
+		this.list[name] = new WebRTC(this.stun, this.optional); 
+	}
+	return this.list[name];	
+}
+
+ShaiiiCDN = (function(){
+	function cdn(signal){
+		this.factory = new Factory();
+		this.signal = signal;
+		this.token=[];
+		window.sources = {};
+		this.listen();
+		this.images();
+	}
+
+	cdn.prototype.answerHelp = function(data){
+		console.log(data);
+
+		var that = this;
+		var remoteId = data.id;	
+		var resource = data.uri;
+
+		webrtc = this.factory.get(resource);
+
+		webrtc.ice(function(candidate){
+			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+		});
+
+		webrtc.offer(data.desc,
+			function(desc){
+				that.send(remoteId, {flag:'answer', uri: resource, desc: desc});
+			}
+		);
+
+		webrtc.send(window.resource[resource]);
+	}
+
+	cdn.prototype.confirmAnswer = function(data){
+		console.log(data);
+
+		var that = this;
+		var remoteId = data.id;	
+		var resource = data.uri;
+
+		webrtc = this.factory.get(resource);
+
+		webrtc.ice(function(candidate){
+			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+		});
+
+		webrtc.setRemoteDescription(data.desc);
+	}
+
+	cdn.prototype.saveToken = function(data){
+		console.log(data);
+		this.token[data.uri] = data.token;
+	}
+
+	cdn.prototype.loadFromServer = function(uri){
+		console.log('load from server:'+(Date.now() - begin));
+		var oReq = new XMLHttpRequest();
+		oReq.open("GET", uri, true);
+		oReq.responseType = "blob";
+			
+		oReq.onload = function(oEvent) {
+	  		blob = oReq.response;
+			new Hash(blob);
+			window.sources[uri] = blob;
+	  		var url = URL.createObjectURL(blob); 
+	  		document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
+			console.log('loaded pic:'+(Date.now() - begin));
+		}
+		oReq.send();
+	}
+
+	cdn.prototype.listen = function(){
+		this.signal.on('help', this.answerHelp);
+		this.signal.on('token', this.saveToken);
+		this.signal.on('answer', this.confirmAnswer);
+		this.signal.on('ice', this.exchangeIce);
+		this.signal.on('loadFromServer', this.loadFromServer);
+	}
+
+	cdn.prototype.send = function(to, msg){
+		data = {to: to, session: msg.uri, desc: msg.desc}; 
+		this.signal.emit(msg.flag, data);	
+	}
+
+	cdn.prototype.get = function(resource){
+		webrtc = this.factory.get(resource);
+		var that = this;
+		webrtc.offer(function(desc){
+			that.send('all', {flag:'help', uri: resource, desc: desc});
+		});
+	}
+
+	cdn.prototype.images = function(){
+		var that = this;
+		document.addEventListener("DOMContentLoaded", function(event) {
+			imgs = document.querySelectorAll("img[shaiii-cdn]");
+			for(i=0; i<imgs.length; i++){
+				src = imgs[i].getAttribute('shaiii-cdn');
+				that.get(src);
+			}
+		});	
+	}
+	return cdn;
+})();
+
+cdn = new ShaiiiCDN(tracker);
