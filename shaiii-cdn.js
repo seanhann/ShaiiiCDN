@@ -18,8 +18,27 @@ Hash = (function(){
 	return hash;
 })();
 
+var Receiver = function(uri){
+	this.uri = uri;
+	this.buffer = [];
+
+	this.receive = function(data){
+		this.buffer.push(data);	
+		if(data.byteLength != 65664){
+			var received = new window.Blob(this.buffer);
+
+			this.buffer = [];
+
+			url= URL.createObjectURL(received);
+			document.querySelector('img[shaiii-cdn="'+this.uri+'"]').src = url;
+		}
+	}		
+}
+
 WebRTC = (function(){
 	function webrtc(stun, optional){
+		this.dataChannel = null;
+		this.closure = null;
 		this.stun = stun;
 		this.optional = optional;
 		this.init();
@@ -30,9 +49,16 @@ WebRTC = (function(){
 			this.connection = new RTCPeerConnection(this.stun, this.optional);
 		}
 	}
+
+	webrtc.prototype.ready = function(closure){
+		this.closure = closure;
+	}
 	
 	webrtc.prototype.dataChannelStateChange = function(){
-  		var readyState = sendChannel.readyState;
+  		var readyState = this.dataChannel.readyState;
+		if(readyState == 'open'){
+			if(this.closure) this.closure(this.dataChannel);		
+		}
   		console.log('Send channel state is: ' + readyState);
 	}
 
@@ -45,13 +71,17 @@ WebRTC = (function(){
 	}
 
 	webrtc.prototype.offer = function(fn){
+		var that = this;
 		if(!this.dataChannel){
 			dataChannel = this.connection.createDataChannel('dataChannel');
-			dataChannel.binaryType = 'arraybuffer';
-			dataChannel.onopen = this.dataChannelStateChange;
-			dataChannel.onclose = this.dataChannelStateChange;
-			dataChannel.onmessage = this.message;
 			this.dataChannel=dataChannel; 
+			dataChannel.binaryType = 'arraybuffer';
+			dataChannel.onopen = function(){ 
+				that.dataChannelStateChange();
+			}
+			dataChannel.onclose = function(){ 
+				that.dataChannelStateChange();
+			}
 		}
 		var that = this;	
   		this.connection.createOffer().then(
@@ -74,13 +104,18 @@ WebRTC = (function(){
 		}
 	}
 
-	webrtc.prototype.answer = function(remoteDesc, blob, answerFun){
+	webrtc.prototype.addIce = function(candidate){
+		this.connection.addIceCandidate(candidate);
+	}
 
-  		var rDesc = new RTCSessionDescription(remoteDesc);
-  		this.setRemoteDescription(rDesc);
+	webrtc.prototype.answer = function(remoteDesc, answerFun){
+
+		var that = this;
+  		var desc = new RTCSessionDescription(remoteDesc);
+  		this.setRemoteDescription(desc);
   		this.connection.createAnswer().then(
 			function(desc){
-				this.connection.setLocalDescription(desc);
+				that.connection.setLocalDescription(desc);
 				answerFun(desc);
 			},
 			function(error){
@@ -89,20 +124,19 @@ WebRTC = (function(){
 		);
 
   		this.connection.ondatachannel = function(event){ 
-  			this.dataChannel = event.channel;
-  			this.dataChannel.binaryType = 'arraybuffer';
-  			this.dataChannel.onmessage = this.message; 
+  			that.dataChannel = event.channel;
+  			that.dataChannel.binaryType = 'arraybuffer';
+			that.dataChannel.onmessage = function(){ 
+				that.message(); 
+			}
+			that.dataChannel.onopen = function(){ 
+				that.dataChannelStateChange();
+			}
+			that.dataChannel.onclose = function(){ 
+				that.dataChannelStateChange();
+			}
   		};
 
-	}
-
-	webrtc.prototype.send = function(blob){
-		 var channel = this.dataChannel;
-  		 var reader = new FileReader();
-  		 reader.addEventListener("loadend", function() {
-  		 	channel.send(reader.result);
-  		 });
-  		 reader.readAsArrayBuffer(blob);
 	}
 
 	return webrtc;
@@ -134,26 +168,42 @@ ShaiiiCDN = (function(){
 		this.images();
 	}
 
+	cdn.prototype.exchangeIce = function(data){
+		console.log(data);
+
+		var session = data.session;
+		var candidate = data.desc;
+		webrtc = this.factory.get(session);
+		webrtc.addIce(candidate);
+	}
+
 	cdn.prototype.answerHelp = function(data){
 		console.log(data);
 
 		var that = this;
 		var remoteId = data.id;	
-		var resource = data.uri;
+		var session = data.session;
+		var blob = window.sources[session];
 
-		webrtc = this.factory.get(resource);
+		webrtc = this.factory.get('p'+session);
 
 		webrtc.ice(function(candidate){
-			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+			that.send(remoteId, {flag:'ice', session:'g'+ session, desc: candidate});
 		});
 
-		webrtc.offer(data.desc,
+		webrtc.answer(data.desc,
 			function(desc){
-				that.send(remoteId, {flag:'answer', uri: resource, desc: desc});
+				that.send(remoteId, {flag:'answer', session: session, desc: desc});
 			}
 		);
 
-		webrtc.send(window.resource[resource]);
+		webrtc.ready(function(channel){
+  		 	var reader = new FileReader();
+  		 	reader.addEventListener("loadend", function() {
+  		 		channel.send(reader.result);
+  		 	});
+  		 	reader.readAsArrayBuffer(blob);
+		});
 	}
 
 	cdn.prototype.confirmAnswer = function(data){
@@ -161,12 +211,12 @@ ShaiiiCDN = (function(){
 
 		var that = this;
 		var remoteId = data.id;	
-		var resource = data.uri;
+		var session = data.session;
 
-		webrtc = this.factory.get(resource);
+		webrtc = this.factory.get('g'+session);
 
 		webrtc.ice(function(candidate){
-			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+			that.send(remoteId, {flag:'ice', session: 'p'+session, desc: candidate});
 		});
 
 		webrtc.setRemoteDescription(data.desc);
@@ -195,23 +245,32 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.listen = function(){
-		this.signal.on('help', this.answerHelp);
-		this.signal.on('token', this.saveToken);
-		this.signal.on('answer', this.confirmAnswer);
-		this.signal.on('ice', this.exchangeIce);
-		this.signal.on('loadFromServer', this.loadFromServer);
+		var that = this;
+		this.signal.on('help', function(data){that.answerHelp(data)});
+		this.signal.on('token', function(data){that.saveToken(data)});
+		this.signal.on('answer', function(data){that.confirmAnswer(data)});
+		this.signal.on('ice', function(data){that.exchangeIce(data)});
+		this.signal.on('loadFromServer', function(data){ that.loadFromServer(data)});
 	}
 
 	cdn.prototype.send = function(to, msg){
-		data = {to: to, session: msg.uri, desc: msg.desc}; 
+		data = {to: to, session: msg.session, desc: msg.desc}; 
 		this.signal.emit(msg.flag, data);	
 	}
 
 	cdn.prototype.get = function(resource){
-		webrtc = this.factory.get(resource);
+		var webrtc = this.factory.get('g'+resource);
 		var that = this;
+  		var receiver = new Receiver(resource); 
 		webrtc.offer(function(desc){
-			that.send('all', {flag:'help', uri: resource, desc: desc});
+			that.send('all', {flag:'help', session: resource, desc: desc});
+		});
+
+		webrtc.ready(function(channel){
+  			channel.onmessage = function (event) {
+  				console.log('receive first byte:'+Date.now());
+  				receiver.receive(event.data);
+  			};
 		});
 	}
 
