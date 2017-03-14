@@ -123,7 +123,7 @@ WebRTC = (function(){
 	}
 
 	webrtc.prototype.addIce = function(candidate){
-		this.connection.addIceCandidate(candidate);
+		this.connection.addIceCandidate(new RTCIceCandidate(candidate));
 	}
 
 	webrtc.prototype.answer = function(remoteDesc, answerFun){
@@ -165,8 +165,10 @@ WebRTC = (function(){
 
 
 Factory = function(){
-	this.stun = { urls: 'stun:stun.l.google.com:19302' };
-	this.servers = { iceServers: this.stun};
+	//this.stun = { urls: 'stun:stun.l.google.com:19302' };
+	this.stun = { urls: 'stun:turn.shaiii.com:3478', 'credential': 'hjxhlk@123', 'username': 'shaiii' };
+	this.turn = { urls: 'turn:turn.shaiii.com:3478', 'credential': 'hjxhlk@123', 'username': 'shaiii' };
+	this.servers = { iceServers: [this.stun, this.turn]};
 	this.DtlsSrtpKeyAgreement = { DtlsSrtpKeyAgreement: true };
 	this.optional = { optional: [this.DtlsSrtpKeyAgreement] };
 	this.list = [];
@@ -174,19 +176,18 @@ Factory = function(){
 
 Factory.prototype.get = function(name){
 	if(!this.list[name]){
-		this.list[name] = new WebRTC(this.stun, this.optional); 
+		this.list[name] = new WebRTC(this.servers, this.optional); 
 	}
 	return this.list[name];	
 }
 
 ShaiiiCDN = (function(){
 	function cdn(signal){
+		window.sources = {};
 		this.factory = new Factory();
 		this.signal = signal;
 		this.token=[];
-		window.sources = {};
 		this.listen();
-		this.help();
 	}
 
 	cdn.prototype.send = function(to, msg){
@@ -197,14 +198,23 @@ ShaiiiCDN = (function(){
 	cdn.prototype.listen = function(){
 		var that = this;
 		this.signal.on('help', function(data){that.answerHelp(data)});
-		this.signal.on('token', function(data){that.saveToken(data)});
+		this.signal.on('init', function(data){that.init(data)});
 		this.signal.on('answer', function(data){that.confirmAnswer(data)});
 		this.signal.on('ice', function(data){that.exchangeIce(data)});
 		this.signal.on('loadFromServer', function(data){ that.loadFromServer(data)});
 	}
 
+	cdn.prototype.init = function(data){
+		console.log('init: remoteId '+data.id);
+		var remoteId = data.id;
+
+		this.help(remoteId);
+	
+		this.token[data.uri] = data.token;
+	}
+
 	cdn.prototype.exchangeIce = function(data){
-		console.log(data);
+		console.log('exchangeIce:' + data);
 
 		var session = data.session;
 		var candidate = data.desc;
@@ -212,25 +222,26 @@ ShaiiiCDN = (function(){
 		webrtc.addIce(candidate);
 	}
 
-	cdn.prototype.help = function(){
+	cdn.prototype.help = function(remoteId){
 		var id = Date.now();
 		var webrtc = this.factory.get(id);
 		var that = this;
 
 		console.log('new webrtc:'+id);
 		debug = webrtc;
-
-		document.addEventListener("DOMContentLoaded", function(event) {
-			imgs = document.querySelectorAll("img[shaiii-cdn]");
-			for(i=0; i<imgs.length; i++){
-				src = imgs[i].getAttribute('shaiii-cdn');
-				webrtc.createChannel(src);
-			}
-		});
 	
-		webrtc.createChannel('src');
+		imgs = document.querySelectorAll("img[shaiii-cdn]");
+		for(i=0; i<imgs.length; i++){
+			src = imgs[i].getAttribute('shaiii-cdn');
+			webrtc.createChannel(src);
+		}
+
+		webrtc.ice(function(candidate){
+			that.send(remoteId, {flag:'ice', session: id, desc: candidate});
+		});
+
 		webrtc.offer(function(desc){
-			that.send('all', {flag:'help', session: id, desc: desc});
+			that.send(remoteId, {flag:'help', session: id, desc: desc});
 		});
 		
 		webrtc.ready(function(channel){
@@ -245,7 +256,7 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.answerHelp = function(data){
-		console.log(data);
+		console.log('answer for:'+data.id);
 
 		var that = this;
 		var remoteId = data.id;	
@@ -279,24 +290,14 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.confirmAnswer = function(data){
-		console.log(data);
+		console.log('confirm answer:'+data.id);
 
 		var that = this;
 		var remoteId = data.id;	
 		var session = data.session;
 
 		webrtc = this.factory.get(session);
-
-		webrtc.ice(function(candidate){
-			that.send(remoteId, {flag:'ice', session: session, desc: candidate});
-		});
-
 		webrtc.setRemoteDescription(data.desc);
-	}
-
-	cdn.prototype.saveToken = function(data){
-		console.log(data);
-		this.token[data.uri] = data.token;
 	}
 
 	cdn.prototype.loadFromServer = function(data){
@@ -328,7 +329,9 @@ ShaiiiCDN = (function(){
 })();
 
 try{
-	cdn = new ShaiiiCDN(tracker);
+	document.addEventListener("DOMContentLoaded", function(event) {
+		cdn = new ShaiiiCDN(tracker);
+	});
 } catch(e) {
 	console.log(e);
 }
