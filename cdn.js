@@ -3,6 +3,20 @@ console.log('begin:'+begin);
 
 var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
 
+Hash = (function(){
+	function hash(blob){
+		var reader = new FileReader();
+		reader.onloadend = function(evt) {
+		  	if (evt.target.readyState == FileReader.DONE) { // DONE == 2
+		  	  	var wordArray = CryptoJS.lib.WordArray.create(evt.target.result);
+		  	  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
+				console.log(hash.toString(CryptoJS.enc.Hex));
+		  	}
+		};
+		reader.readAsArrayBuffer( blob );
+	}
+	return hash;
+})();
 
 WebRTC = (function(){
 	function webrtc(stun, optional){
@@ -47,6 +61,50 @@ WebRTC = (function(){
   			},this.error
   		);
 	}
+
+	webrtc.prototype.setRemoteDescription = function(desc){
+		this.connection.setRemoteDescription(desc);
+	}
+
+	webrtc.prototype.ice = function(iceFun){
+		this.connection.onicecandidate = function(e){
+			if(e.candidate){
+				iceFun(e.candidate)	
+			}
+		}
+	}
+
+	webrtc.prototype.answer = function(remoteDesc, blob, answerFun){
+
+  		var rDesc = new RTCSessionDescription(remoteDesc);
+  		this.setRemoteDescription(rDesc);
+  		this.connection.createAnswer().then(
+			function(desc){
+				this.connection.setLocalDescription(desc);
+				answerFun(desc);
+			},
+			function(error){
+				alert(error);
+			}
+		);
+
+  		this.connection.ondatachannel = function(event){ 
+  			this.dataChannel = event.channel;
+  			this.dataChannel.binaryType = 'arraybuffer';
+  			this.dataChannel.onmessage = this.message; 
+  		};
+
+	}
+
+	webrtc.prototype.send = function(blob){
+		 var channel = this.dataChannel;
+  		 var reader = new FileReader();
+  		 reader.addEventListener("loadend", function() {
+  		 	channel.send(reader.result);
+  		 });
+  		 reader.readAsArrayBuffer(blob);
+	}
+
 	return webrtc;
 })();
 
@@ -70,6 +128,7 @@ ShaiiiCDN = (function(){
 	function cdn(signal){
 		this.factory = new Factory();
 		this.signal = signal;
+		this.token=[];
 		window.sources = {};
 		this.listen();
 		this.images();
@@ -77,6 +136,45 @@ ShaiiiCDN = (function(){
 
 	cdn.prototype.answerHelp = function(data){
 		console.log(data);
+
+		var that = this;
+		var remoteId = data.id;	
+		var resource = data.uri;
+
+		webrtc = this.factory.get(resource);
+
+		webrtc.ice(function(candidate){
+			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+		});
+
+		webrtc.offer(data.desc,
+			function(desc){
+				that.send(remoteId, {flag:'answer', uri: resource, desc: desc});
+			}
+		);
+
+		webrtc.send(window.resource[resource]);
+	}
+
+	cdn.prototype.confirmAnswer = function(data){
+		console.log(data);
+
+		var that = this;
+		var remoteId = data.id;	
+		var resource = data.uri;
+
+		webrtc = this.factory.get(resource);
+
+		webrtc.ice(function(candidate){
+			that.send(remoteId, {flag:'ice', uri: resource, candidate: candidate});
+		});
+
+		webrtc.setRemoteDescription(data.desc);
+	}
+
+	cdn.prototype.saveToken = function(data){
+		console.log(data);
+		this.token[data.uri] = data.token;
 	}
 
 	cdn.prototype.loadFromServer = function(uri){
@@ -87,6 +185,7 @@ ShaiiiCDN = (function(){
 			
 		oReq.onload = function(oEvent) {
 	  		blob = oReq.response;
+			new Hash(blob);
 			window.sources[uri] = blob;
 	  		var url = URL.createObjectURL(blob); 
 	  		document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
@@ -97,6 +196,7 @@ ShaiiiCDN = (function(){
 
 	cdn.prototype.listen = function(){
 		this.signal.on('help', this.answerHelp);
+		this.signal.on('token', this.saveToken);
 		this.signal.on('answer', this.confirmAnswer);
 		this.signal.on('ice', this.exchangeIce);
 		this.signal.on('loadFromServer', this.loadFromServer);
