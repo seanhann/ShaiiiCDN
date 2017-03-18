@@ -1,7 +1,20 @@
-var begin = Date.now();
-var debug = null;
-console.log('begin:'+begin);
+Log = (function(){
+	function log(show){
+		this.begin = Date.now();
+		this.show = show;
+	}
 
+	log.prototype.write = function(str){
+		if(this.show) console.log(str+'\t'+(Date.now() - this.begin));
+	}
+	return log;
+})();
+
+var log = new Log(true);
+
+var padgeSize = 1024*32; //65564;
+
+log.write('begin');
 var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
 
 Hash = (function(){
@@ -23,6 +36,37 @@ Hash = (function(){
 	return hash;
 })();
 
+var Sender = (function(){
+	function sender(channel, chunkSize){
+		this.channel = channel;
+		this.chunkSize = chunkSize;
+		this.blob = null;
+	}
+
+	sender.prototype.send = function(blob){
+		this.blob = blob;
+		this.chunk(0);	
+	}
+
+	sender.prototype.chunk = function(offset){
+		if(this.blob.size > offset){
+			log.write('begin chunk '+this.channel.label);
+			var that = this;
+  		 	var reader = new FileReader();
+			var chunk = this.blob.slice(offset, this.chunkSize+offset, this.blob.type);
+  		 	reader.addEventListener("loadend", function(e) {
+				log.write('slice chunk '+that.channel.label);
+  		 		that.channel.send(reader.result);
+				log.write('buffered amount '+ that.channel.bufferedAmount);
+  		 	});
+  		 	reader.readAsArrayBuffer(chunk);
+			this.chunk(offset + that.chunkSize);
+		}
+	}
+
+	return sender;
+})();
+
 var Receiver = (function(){
 
 	function receiver(uri, token){
@@ -33,25 +77,27 @@ var Receiver = (function(){
 
 	receiver.prototype.receive = function(data){
 		this.buffer.push(data);	
-		if(data.byteLength != 65664){
+		if(data.byteLength != padgeSize){
 			var that = this;
 			var received = new window.Blob(this.buffer);
 			this.buffer = [];
 
 			window.sources[this.uri] = received;
 
-			/*
 			url= URL.createObjectURL(received);
-			document.querySelector('img[shaiii-cdn="'+that.uri+'"]').src = url;
-			*/
+			document.querySelector('img[shaiii-cdn="'+this.uri+'"]').src = url;
+			log.write('show pic' + this.uri);
+			/*
+			log.write('hash pic');
 			var hash = new Hash(received);
 			hash.verify(function(hex){
 				//if(hex == that.token){
 					url= URL.createObjectURL(received);
 					document.querySelector('img[shaiii-cdn="'+that.uri+'"]').src = url;
-					console.log('show pic:'+Date.now());
+					log.write('show pic');
 				//}
 			});
+			*/
 		}
 	}
 	return receiver;		
@@ -78,14 +124,17 @@ WebRTC = (function(){
 	
 	webrtc.prototype.dataChannelStateChange = function(name){
   		var readyState = this.dataChannel[name].readyState;
+  		log.write( this.dataChannel[name].label +'is: ' + readyState );
+
 		if(readyState == 'open'){
-			if(this.closure) this.closure(this.dataChannel[name]);		
+			if(this.closure){
+				this.closure(this.dataChannel[name]);
+			}	
 		}
-  		console.log( this.dataChannel[name].label +'channel state is: ' + readyState);
 	}
 
 	webrtc.prototype.error = function(error){
-		console.log(error);
+		log.write(error);
 	}
 
 	webrtc.prototype.createChannel = function(name){
@@ -145,8 +194,6 @@ WebRTC = (function(){
   			var dataChannel = event.channel;
 			var name = dataChannel.label;
 
-			console.log('answer channel:'+name);
-
   			dataChannel.binaryType = 'arraybuffer';
 			that.dataChannel[name] = dataChannel;
 
@@ -205,7 +252,7 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.init = function(data){
-		console.log('init: remoteId '+data.id);
+		log.write('init: remoteId ');
 		var remoteId = data.id;
 
 		this.help(remoteId);
@@ -214,7 +261,7 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.exchangeIce = function(data){
-		console.log('exchangeIce:' + data);
+		log.write('exchangeIce:' + data);
 
 		var session = data.session;
 		var candidate = data.desc;
@@ -227,36 +274,41 @@ ShaiiiCDN = (function(){
 		var webrtc = this.factory.get(id);
 		var that = this;
 
-		console.log('new webrtc:'+id);
-		debug = webrtc;
+		log.write('new webrtc:'+id);
 	
 		imgs = document.querySelectorAll("img[shaiii-cdn]");
 		for(i=0; i<imgs.length; i++){
 			src = imgs[i].getAttribute('shaiii-cdn');
-			webrtc.createChannel(src);
+			if(window.sources[src]){
+			}else{
+				webrtc.createChannel(src);
+			}
 		}
 
 		webrtc.ice(function(candidate){
 			that.send(remoteId, {flag:'ice', session: id, desc: candidate});
+			log.write('send ice:');
 		});
 
 		webrtc.offer(function(desc){
 			that.send(remoteId, {flag:'help', session: id, desc: desc});
+			log.write('send offer:');
 		});
 		
 		webrtc.ready(function(channel){
+			log.write('webrtc ready:');
 			var name = channel.label;
 			var token = that.token[name];
   			var receiver = new Receiver(name, token); 
   			channel.onmessage = function (event) {
-  				console.log('receive first byte:'+Date.now());
+  				log.write(name+' receive byte:');
   				receiver.receive(event.data);
   			};
 		});
 	}
 
 	cdn.prototype.answerHelp = function(data){
-		console.log('answer for:'+data.id);
+		log.write('answer for:'+data.id);
 
 		var that = this;
 		var remoteId = data.id;	
@@ -278,11 +330,10 @@ ShaiiiCDN = (function(){
 			var name = channel.label;
 			var blob = window.sources[name];
   		 	var reader = new FileReader();
-  		 	reader.addEventListener("loadend", function() {
-  		 		channel.send(reader.result);
-  		 	});
+			var chunkSize = padgeSize;//16384;
 			if(blob){
-  		 		reader.readAsArrayBuffer(blob);
+				var sender = new Sender(channel, chunkSize);
+				sender.send(blob);
 			}else{
 				channel.close();
 			}
@@ -290,7 +341,7 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.confirmAnswer = function(data){
-		console.log('confirm answer:'+data.id);
+		log.write('confirm answer:'+data.id);
 
 		var that = this;
 		var remoteId = data.id;	
@@ -309,7 +360,7 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.loadUri = function(uri){
-		console.log('load from server:'+(Date.now() - begin));
+		log.write('load from server:');
 		var oReq = new XMLHttpRequest();
 		oReq.open("GET", uri, true);
 		oReq.responseType = "blob";
@@ -319,7 +370,7 @@ ShaiiiCDN = (function(){
 			window.sources[uri] = blob;
 	  		var url = URL.createObjectURL(blob); 
 	  		document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
-			console.log('loaded pic:'+(Date.now() - begin));
+			log.write('loaded pic:');
 		}
 		oReq.send();
 	}
