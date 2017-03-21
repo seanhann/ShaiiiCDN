@@ -18,8 +18,8 @@ function toArrayBuffer(buf) {
     return ab;
 }
 
-function token(uri){
-	http.get(uri, function(res) {
+function token(domain, uri){
+	http.get(domain + uri, function(res) {
 	  res.setEncoding('binary');
 	  var body = ''; 
 	  res.on('data', function(data){
@@ -30,7 +30,8 @@ function token(uri){
 		data = toArrayBuffer(buffer);
 		var wordArray = CryptoJS.lib.WordArray.create(data);
 		var hash = CryptoJS.SHA3(wordArray, { outputLength: 224 });
-		resourceToken[uri] = hash.toString(CryptoJS.enc.Hex);
+		resourceToken[domain][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: buffer.length};
+	  	console.log("prepare: " + domain+uri + 'size:' + buffer.length);
 	  });
 	})
 	.on('error', function(e) {
@@ -40,51 +41,67 @@ function token(uri){
 
 
 domainList = {};
-domainCount = {};
+domainPeer = {};
 resourceToken = {};
-
+pairs = {};
 io.on('connection', function (socket) {
     domain = socket.handshake.headers.referer;
     if(domainList[domain] == null){ 
         console.log('new domain space '+domain);
 
-	domainCount[domain] = 0;
+	domainPeer[domain] = [];
 	space = domainList[domain] = io.of('/'+domain);
         space.on('connection', function(socket){
-	    domainCount[domain] += 1;
 
-            console.log('new peer of '+domain);
-            console.log('new peer id '+socket.id);
-	    console.log('domain peers '+domainCount[domain]);
+	    console.log('domain peers '+domainPeer[domain].length);
+
+	    if(domainPeer[domain].length > 0){
+	    	len = domainPeer[domain].length;
+	    	peer = domainPeer[domain][ Math.floor((Math.random() * 10) + 1)%len ];
+	    	console.log('init from:'+socket.id+' asigned to:'+peer);
+	    	socket.emit('init', { token: resourceToken[domain], id: peer});
+	    }else{
+	    	console.log('loadFromServer:'+domain);
+	    	socket.emit('loadFromServer', domain);
+	    	//token(domain+uri);
+	    }
+
+	    domainPeer[domain].push(socket.id); 
+	    socket.on('prepare', function(data){
+		resourceToken[domain] = {};
+		data.forEach(function(elem){
+			token(domain, elem);
+		});
+	    });
 
 	    socket.on('ice', function(data){
-		console.log('ice from:'+socket.id + 'to: '+data.id);
-		if(data.id) socket.broadcast.to(data.id).emit('ice',{id:socket.id, uri:data.uri, candidate:data.candidate});
+		console.log('ice from:'+socket.id + 'to: '+data.to);
+		if(data.to) socket.broadcast.to(data.to).emit('ice',{to:socket.id, session:data.session, desc:data.desc});
 	    });
 
 	    socket.on('help', function(data){
 		console.log('help from:'+socket.id);
 		uri = data.session;
 		desc = data.desc;
-		if(domainCount[domain] > 1){
-			console.log('brodcast help for:'+socket.id);
-			socket.emit('token', { uri: uri, token: resourceToken[domain+uri]});
-            		socket.broadcast.emit('help',{id:socket.id, desc:desc, uri: uri});
-		}else{
-			console.log('loadFromServer:'+domain+uri);
-			socket.emit('loadFromServer', uri);
-			token(domain+uri);
-		}
+            	socket.broadcast.to(data.to).emit('help',{id:socket.id, desc:desc, session: uri});
 	    });
 
-	    socket.on('answer', function(to, desc, uri){
+	    socket.on('answer', function(data){
 		console.log('answer from:'+socket.id);
-            	socket.broadcast.to(to).emit('answer',{id:socket.id, desc:desc, uri:uri});
+		to = data.to;
+		desc = data.desc;
+		session = data.session;
+            	socket.broadcast.to(to).emit('answer',{id:socket.id, desc:desc, session:session});
 	    });
 
   	    socket.on('disconnect', function () {
   	        console.log('domain user disconnected');
-		if(domainCount[domain] > 0) domainCount[domain] -= 1;
+		var length = domainPeer[domain].length;
+		for(i=0; i<length; i++){
+			if(domainPeer[domain][i] == socket.id){
+				domainPeer[domain].splice(i,1);
+			}
+		}
   	    });
         });
     }else{

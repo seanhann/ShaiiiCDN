@@ -36,16 +36,77 @@ Hash = (function(){
 	return hash;
 })();
 
+
 var Sender = (function(){
 	function sender(channel, chunkSize){
 		this.channel = channel;
 		this.chunkSize = chunkSize;
+		this.q = [];
+		this.running = false;
 		this.blob = null;
 	}
 
+	sender.prototype.worker = function(){
+		var blobURL = URL.createObjectURL( new Blob([ '(',
+		function(){
+		    onmessage = function(e) {
+		        var xhr = new XMLHttpRequest();
+			var chunkSize = e.data.chunkSize;
+		        xhr.open('GET', e.data.blobUrl, true);
+		        xhr.responseType = 'blob';
+		        xhr.onload = function(e) {
+		                if (this.status == 200) {
+		                        var blob = this.response;
+		                        var offset = 0;
+		                        while(blob.size > offset){
+		                                var reader = new FileReader();
+		                                var chunk = blob.slice(offset, chunkSize+offset);
+		                                reader.addEventListener('loadend', function(e) {
+		                                        postMessage(e.target.result);
+							//if(e.target.result.byteLength != chunkSize) close();
+		                                });
+		                                reader.readAsArrayBuffer(chunk);
+		                                offset += chunkSize;
+		                        }
+		                }
+		        };
+		        xhr.send();
+		    }
+		}.toString(),
+		')()' ], { type: 'application/javascript' } ) ),
+		
+		worker = new Worker( blobURL );
+		URL.revokeObjectURL( blobURL );
+		return worker;
+	}
+
+	sender.prototype.Q = function(data){
+		this.q.push(data);
+		if(this.running == false){
+			this.running = true;
+			while( this.q.length > 0 ){
+				if(this.channel.bufferedAmount < 16744448){
+					this.channel.send(this.q.shift());
+				}else{
+					new Promise((resolve) => setTimeout(resolve, 100));
+				}
+			}
+			this.running = false;
+		}
+	}
+
 	sender.prototype.send = function(blob){
+		var that = this;
 		this.blob = blob;
-		this.chunk(0);	
+		
+		log.write('create worker '+this.channel.label);
+		var worker = this.worker();
+		worker.onmessage = function(e){
+			that.Q(e.data);
+		}
+		worker.postMessage({blobUrl: this.blob, chunkSize: this.chunkSize});
+		log.write('start worker '+this.channel.label);
+		//this.chunk(0);
 	}
 
 	sender.prototype.chunk = function(offset){
@@ -57,6 +118,9 @@ var Sender = (function(){
   		 	reader.addEventListener("loadend", function(e) {
 				log.write('slice chunk '+that.channel.label);
   		 		that.channel.send(reader.result);
+				if(that.channel.bufferedAmount > 16744448){
+					new Promise(resolve => setTimeout(resolve, 500));
+				}
 				log.write('buffered amount '+ that.channel.bufferedAmount);
   		 	});
   		 	reader.readAsArrayBuffer(chunk);
@@ -69,24 +133,34 @@ var Sender = (function(){
 
 var Receiver = (function(){
 
-	function receiver(uri, token){
+	function receiver(uri, security){
 		this.uri = uri;
-		this.token = token;
+		this.token = security.hash;
+		this.size = security.size;
+		this.bufferedSize = 0;
 		this.buffer = [];
 	}
 
 	receiver.prototype.receive = function(data){
-		this.buffer.push(data);	
-		if(data.byteLength != padgeSize){
+		this.buffer.push(data);
+		this.bufferedSize += data.byteLength;
+		if(this.bufferedSize == this.size){
 			var that = this;
 			var received = new window.Blob(this.buffer);
 			this.buffer = [];
 
 			window.sources[this.uri] = received;
 
-			url= URL.createObjectURL(received);
-			document.querySelector('img[shaiii-cdn="'+this.uri+'"]').src = url;
-			log.write('show pic' + this.uri);
+		  	var wordArray = CryptoJS.lib.WordArray.create(data);
+		  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
+			var token = hash.toString(CryptoJS.enc.Hex);
+	
+			log.write('show pic' + this.uri + 'web: '+token+ ' server:'+this.token);
+			//if(token == this.token){
+				url= URL.createObjectURL(received);
+				document.querySelector('[shaiii-cdn="'+this.uri+'"]').src = url;
+				log.write('show pic' + this.uri);
+			//}
 			/*
 			log.write('hash pic');
 			var hash = new Hash(received);
@@ -233,13 +307,8 @@ ShaiiiCDN = (function(){
 		window.sources = {};
 		this.factory = new Factory();
 		this.signal = signal;
-		this.token=[];
+		this.token={};
 		this.listen();
-	}
-
-	cdn.prototype.send = function(to, msg){
-		data = {to: to, session: msg.session, desc: msg.desc}; 
-		this.signal.emit(msg.flag, data);	
 	}
 
 	cdn.prototype.listen = function(){
@@ -254,10 +323,13 @@ ShaiiiCDN = (function(){
 	cdn.prototype.init = function(data){
 		log.write('init: remoteId ');
 		var remoteId = data.id;
-
 		this.help(remoteId);
-	
-		this.token[data.uri] = data.token;
+		this.token = data.token;
+	}
+
+	cdn.prototype.send = function(to, msg){
+		data = {to: to, session: msg.session, desc: msg.desc}; 
+		this.signal.emit(msg.flag, data);	
 	}
 
 	cdn.prototype.exchangeIce = function(data){
@@ -276,7 +348,7 @@ ShaiiiCDN = (function(){
 
 		log.write('new webrtc:'+id);
 	
-		imgs = document.querySelectorAll("img[shaiii-cdn]");
+		imgs = document.querySelectorAll("[shaiii-cdn]");
 		for(i=0; i<imgs.length; i++){
 			src = imgs[i].getAttribute('shaiii-cdn');
 			if(window.sources[src]){
@@ -296,7 +368,6 @@ ShaiiiCDN = (function(){
 		});
 		
 		webrtc.ready(function(channel){
-			log.write('webrtc ready:');
 			var name = channel.label;
 			var token = that.token[name];
   			var receiver = new Receiver(name, token); 
@@ -328,8 +399,8 @@ ShaiiiCDN = (function(){
 
 		webrtc.ready(function(channel){
 			var name = channel.label;
-			var blob = window.sources[name];
-  		 	var reader = new FileReader();
+			//var blob = window.sources[name];
+	  		var blob = document.querySelector('[shaiii-cdn="'+name+'"]').src;
 			var chunkSize = padgeSize;//16384;
 			if(blob){
 				var sender = new Sender(channel, chunkSize);
@@ -352,11 +423,14 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.loadFromServer = function(data){
-		imgs = document.querySelectorAll("img[shaiii-cdn]");
+		var prepare = [];
+		imgs = document.querySelectorAll("[shaiii-cdn]");
 		for(i=0; i<imgs.length; i++){
 			src = imgs[i].getAttribute('shaiii-cdn');
 			this.loadUri(src);
+			prepare.push(src);
 		}
+		this.signal.emit('prepare', prepare);	
 	}
 
 	cdn.prototype.loadUri = function(uri){
@@ -369,7 +443,7 @@ ShaiiiCDN = (function(){
 	  		blob = oReq.response;
 			window.sources[uri] = blob;
 	  		var url = URL.createObjectURL(blob); 
-	  		document.querySelector('img[shaiii-cdn="'+uri+'"]').src = url;
+	  		document.querySelector('[shaiii-cdn="'+uri+'"]').src = url;
 			log.write('loaded pic:');
 		}
 		oReq.send();
