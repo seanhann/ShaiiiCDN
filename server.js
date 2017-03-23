@@ -28,8 +28,17 @@ function token(domain, uri){
 	  res.on('end', function() {
 		buffer = new Buffer(body, 'binary');
 		data = toArrayBuffer(buffer);
-		var wordArray = CryptoJS.lib.WordArray.create(data);
+		sliced = [];
+		offset = 0;
+		chunkSize = 65536;
+		while(data.byteLength > offset){
+			sliced.push( data.slice(offset, offset+chunkSize) );
+			offset += chunkSize;
+		}
+
+		var wordArray = CryptoJS.lib.WordArray.create(sliced);
 		var hash = CryptoJS.SHA3(wordArray, { outputLength: 224 });
+
 		resourceToken[domain][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: buffer.length};
 	  	console.log("prepare: " + domain+uri + 'size:' + buffer.length);
 	  });

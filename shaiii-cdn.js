@@ -5,37 +5,16 @@ Log = (function(){
 	}
 
 	log.prototype.write = function(str){
-		if(this.show) console.log(str+'\t'+(Date.now() - this.begin));
+		var now = Date.now();
+		if(this.show) console.log(str+'\t'+(now - this.begin));
 	}
 	return log;
 })();
 
 var log = new Log(true);
 
-var padgeSize = 1024*32; //65564;
-
 log.write('begin');
 var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
-
-Hash = (function(){
-	function hash(blob){
-		this.blob = blob;
-	}
-
-	hash.prototype.verify = function(fn){
-		var reader = new FileReader();
-		reader.onloadend = function(evt) {
-		  	if (evt.target.readyState == FileReader.DONE) { // DONE == 2
-		  	  	var wordArray = CryptoJS.lib.WordArray.create(evt.target.result);
-		  	  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
-				fn(hash.toString(CryptoJS.enc.Hex));
-		  	}
-		};
-		reader.readAsArrayBuffer( this.blob );
-	}
-	return hash;
-})();
-
 
 var Sender = (function(){
 	function sender(channel, chunkSize){
@@ -49,6 +28,16 @@ var Sender = (function(){
 	sender.prototype.worker = function(){
 		var blobURL = URL.createObjectURL( new Blob([ '(',
 		function(){
+		    var queue = [];
+		    var pointer = 0;
+		    function sendQ(i){
+			if(i <= pointer){
+				while(queue[pointer]){
+					postMessage(queue[pointer]);
+					pointer++;
+				}
+			}
+		    }
 		    onmessage = function(e) {
 		        var xhr = new XMLHttpRequest();
 			var chunkSize = e.data.chunkSize;
@@ -58,15 +47,20 @@ var Sender = (function(){
 		                if (this.status == 200) {
 		                        var blob = this.response;
 		                        var offset = 0;
+					var sended = 0;
+					var counter = 0;
 		                        while(blob.size > offset){
 		                                var reader = new FileReader();
 		                                var chunk = blob.slice(offset, chunkSize+offset);
-		                                reader.addEventListener('loadend', function(e) {
-		                                        postMessage(e.target.result);
-							//if(e.target.result.byteLength != chunkSize) close();
-		                                });
+		                                reader.addEventListener('loadend', (function(index){return function(e) {
+		                                        queue[index] = e.target.result;
+							sendQ(index);
+							sended += e.target.result.byteLength;
+							if(sended == blob.size) close();
+		                                }})(counter));
 		                                reader.readAsArrayBuffer(chunk);
 		                                offset += chunkSize;
+						counter++;
 		                        }
 		                }
 		        };
@@ -139,39 +133,36 @@ var Receiver = (function(){
 		this.size = security.size;
 		this.bufferedSize = 0;
 		this.buffer = [];
+		//this.buffer = new Uint8Array(this.size);
 	}
 
 	receiver.prototype.receive = function(data){
 		this.buffer.push(data);
+		//this.buffer.set( new Uint8Array( data ), this.bufferedSize );
 		this.bufferedSize += data.byteLength;
 		if(this.bufferedSize == this.size){
+			log.write('loaded pic');
 			var that = this;
+			/*
+			var dataView = new DataView(this.buffer.buffer);
+			var received = new Blob([dataView]);
+			*/
 			var received = new window.Blob(this.buffer);
-			this.buffer = [];
 
 			window.sources[this.uri] = received;
 
-		  	var wordArray = CryptoJS.lib.WordArray.create(data);
+		  	var wordArray = CryptoJS.lib.WordArray.create(this.buffer);
 		  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
 			var token = hash.toString(CryptoJS.enc.Hex);
-	
+
 			log.write('show pic' + this.uri + 'web: '+token+ ' server:'+this.token);
-			//if(token == this.token){
+			if(token == this.token){
 				url= URL.createObjectURL(received);
 				document.querySelector('[shaiii-cdn="'+this.uri+'"]').src = url;
 				log.write('show pic' + this.uri);
-			//}
-			/*
-			log.write('hash pic');
-			var hash = new Hash(received);
-			hash.verify(function(hex){
-				//if(hex == that.token){
-					url= URL.createObjectURL(received);
-					document.querySelector('img[shaiii-cdn="'+that.uri+'"]').src = url;
-					log.write('show pic');
-				//}
-			});
-			*/
+			}
+
+			this.buffer = [];
 		}
 	}
 	return receiver;		
@@ -372,7 +363,7 @@ ShaiiiCDN = (function(){
 			var token = that.token[name];
   			var receiver = new Receiver(name, token); 
   			channel.onmessage = function (event) {
-  				log.write(name+' receive byte:');
+  				log.write(name+' receive byte:'+event.data.byteLength);
   				receiver.receive(event.data);
   			};
 		});
@@ -401,7 +392,7 @@ ShaiiiCDN = (function(){
 			var name = channel.label;
 			//var blob = window.sources[name];
 	  		var blob = document.querySelector('[shaiii-cdn="'+name+'"]').src;
-			var chunkSize = padgeSize;//16384;
+			var chunkSize = 65536; //1024 * 64; //16384;//1024*32;
 			if(blob){
 				var sender = new Sender(channel, chunkSize);
 				sender.send(blob);
