@@ -82,7 +82,7 @@ var Sender = (function(){
 				if(this.channel.bufferedAmount < 16744448){
 					this.channel.send(this.q.shift());
 				}else{
-					new Promise((resolve) => setTimeout(resolve, 100));
+					new Promise(function(resolve){ setTimeout(resolve, 100) });
 				}
 			}
 			this.running = false;
@@ -113,7 +113,7 @@ var Sender = (function(){
 				log.write('slice chunk '+that.channel.label);
   		 		that.channel.send(reader.result);
 				if(that.channel.bufferedAmount > 16744448){
-					new Promise(resolve => setTimeout(resolve, 500));
+					new Promise(function(resolve){ setTimeout(resolve, 500) });
 				}
 				log.write('buffered amount '+ that.channel.bufferedAmount);
   		 	});
@@ -127,13 +127,39 @@ var Sender = (function(){
 
 var Receiver = (function(){
 
-	function receiver(uri, security){
-		this.uri = uri;
+	function receiver(channel, security){
+		this.channel = channel;
+		this.uri = channel.label;
 		this.token = security.hash;
 		this.size = security.size;
 		this.bufferedSize = 0;
 		this.buffer = [];
+		this.success = false;
+		this.init();
 		//this.buffer = new Uint8Array(this.size);
+	}
+
+	receiver.prototype.init = function(){
+		var that = this;	
+  		this.channel.onmessage = function (event) {
+  			log.write(name+' receive byte:'+event.data.byteLength);
+  			that.receive(event.data);
+  		};
+
+		this.channel.onclose = function(){
+			if(! that.success){
+				if(this.error) this.error();
+			}
+		}
+
+	}
+
+	receiver.prototype.ready = function(closure){
+		this.closure = closure;
+	}
+
+	receiver.prototype.error = function(closure){
+		this.error = closure;
 	}
 
 	receiver.prototype.receive = function(data){
@@ -147,19 +173,20 @@ var Receiver = (function(){
 			var dataView = new DataView(this.buffer.buffer);
 			var received = new Blob([dataView]);
 			*/
-			var received = new window.Blob(this.buffer);
-
-			window.sources[this.uri] = received;
 
 		  	var wordArray = CryptoJS.lib.WordArray.create(this.buffer);
 		  	var hash = CryptoJS.SHA3(wordArray, { outputLength: 224});
 			var token = hash.toString(CryptoJS.enc.Hex);
 
-			log.write('show pic' + this.uri + 'web: '+token+ ' server:'+this.token);
+			//log.write('show pic' + this.uri + 'web: '+token+ ' server:'+this.token);
 			if(token == this.token){
-				url= URL.createObjectURL(received);
-				document.querySelector('[shaiii-cdn="'+this.uri+'"]').src = url;
-				log.write('show pic' + this.uri);
+				this.success = true;
+				if(this.closure){
+					var received = new Blob(this.buffer);
+					this.closure(received);
+				}
+			}else{
+				if(this.error) this.error();
 			}
 
 			this.buffer = [];
@@ -172,6 +199,7 @@ WebRTC = (function(){
 	function webrtc(stun, optional){
 		this.dataChannel = {};
 		this.closure = null;
+		this.closeClosure = null;
 		this.stun = stun;
 		this.optional = optional;
 		this.init();
@@ -180,11 +208,23 @@ WebRTC = (function(){
 	webrtc.prototype.init = function(){
 		if(!this.connection){
 			this.connection = new RTCPeerConnection(this.stun, this.optional);
+
+			var that = this;
+			this.connection.oniceconnectionstatechange = function(event) {
+				log.write(that.connection.iceConnectionState);
+				if (that.connection.iceConnectionState === "failed" || that.connection.iceConnectionState === "disconnected" || that.connection.iceConnectionState === "closed") {
+					if(that.closeClosure) that.closeClosure();
+				}
+			}
 		}
 	}
 
 	webrtc.prototype.ready = function(closure){
 		this.closure = closure;
+	}
+
+	webrtc.prototype.close = function(closure){
+		this.closeClosure = closure;
 	}
 	
 	webrtc.prototype.dataChannelStateChange = function(name){
@@ -192,9 +232,11 @@ WebRTC = (function(){
   		log.write( this.dataChannel[name].label +'is: ' + readyState );
 
 		if(readyState == 'open'){
-			if(this.closure){
-				this.closure(this.dataChannel[name]);
-			}	
+			if(this.closure) this.closure(this.dataChannel[name]);
+		}else if(readyState == 'closed'){
+  			log.write( this.dataChannel[name].label +'is: ' + readyState );
+			delete this.dataChannel[name];
+			if(Object.keys(this.dataChannel).length == 0) this.connection.close();
 		}
 	}
 
@@ -318,6 +360,13 @@ ShaiiiCDN = (function(){
 		this.token = data.token;
 	}
 
+	cdn.prototype.close = function(){
+		var rtcs = this.factory.list;
+		for(var key in rtcs){
+			rtcs[key].connection.close();
+		}
+	}
+
 	cdn.prototype.send = function(to, msg){
 		data = {to: to, session: msg.session, desc: msg.desc}; 
 		this.signal.emit(msg.flag, data);	
@@ -342,8 +391,8 @@ ShaiiiCDN = (function(){
 		imgs = document.querySelectorAll("[shaiii-cdn]");
 		for(i=0; i<imgs.length; i++){
 			src = imgs[i].getAttribute('shaiii-cdn');
-			if(window.sources[src]){
-			}else{
+			if(window.sources[src] == null){
+				window.sources[src] = null;
 				webrtc.createChannel(src);
 			}
 		}
@@ -361,11 +410,28 @@ ShaiiiCDN = (function(){
 		webrtc.ready(function(channel){
 			var name = channel.label;
 			var token = that.token[name];
-  			var receiver = new Receiver(name, token); 
-  			channel.onmessage = function (event) {
-  				log.write(name+' receive byte:'+event.data.byteLength);
-  				receiver.receive(event.data);
-  			};
+  			var receiver = new Receiver(channel, token);
+			receiver.ready(function(received){
+				window.sources[name] = received;
+
+				url= URL.createObjectURL(received);
+				document.querySelector('[shaiii-cdn="'+name+'"]').src = url;
+				log.write('show pic' + name);
+
+				channel.close();
+				log.write(name + 'closed correctly');
+			});
+
+			receiver.error(function(){
+				that.loadUri(name);
+			});
+
+		});
+
+		webrtc.close(function(){
+			for(var i in window.sources){
+				if(window.sources[i] == '' || window.sources[i] == null || window.sources[i] == undefined) that.loadUri(i);
+			};
 		});
 	}
 
@@ -445,9 +511,16 @@ ShaiiiCDN = (function(){
 })();
 
 try{
+	var cdn;
 	document.addEventListener("DOMContentLoaded", function(event) {
 		cdn = new ShaiiiCDN(tracker);
 	});
+	window.onbeforeunload = function(){
+		cdn.close();
+	}
+	window.addEventListener("beforeunload", function(e){
+		cdn.close();	
+	}, false);
 } catch(e) {
 	console.log(e);
 }
