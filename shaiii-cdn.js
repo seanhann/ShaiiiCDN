@@ -354,10 +354,18 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.init = function(data){
-		log.write('init: remoteId ');
-		var remoteId = data.id;
-		this.help(remoteId);
-		this.token = data.token;
+		if(window.RTCPeerConnection){
+			log.write('init: remoteId ');
+			var remoteId = data.id;
+			this.help(remoteId);
+			this.token = data.token;
+		}else{
+			imgs = document.querySelectorAll("[shaiii-cdn]");
+			for(i=0; i<imgs.length; i++){
+				imgs[i].src = imgs[i].getAttribute('shaiii-cdn');
+			}
+		}
+
 	}
 
 	cdn.prototype.close = function(){
