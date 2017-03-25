@@ -64,11 +64,11 @@ io.on('connection', function (socket) {
 
 	    console.log('domain peers '+domainPeer[domain].length);
 
-	    if(domainPeer[domain].length > 0){
+	    if(domainPeer[domain].length > 1){
 	    	len = domainPeer[domain].length;
 	    	peer = domainPeer[domain][ Math.floor((Math.random() * 10) + 1)%len ];
-	    	console.log('init from:'+socket.id+' asigned to:'+peer);
 	    	socket.emit('init', { token: resourceToken[domain], id: peer});
+	    	console.log('init from:'+socket.id+' asigned to:'+peer);
 	    }else{
 	    	console.log('loadFromServer:'+domain);
 	    	socket.emit('loadFromServer', domain);

@@ -1,3 +1,79 @@
+
+var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
+
+(function(funcName, baseObj) {
+    // The public function name defaults to window.docReady
+    // but you can pass in your own object and own function name and those will be used
+    // if you want to put them in a different namespace
+    funcName = funcName || "docReady";
+    baseObj = baseObj || window;
+    var readyList = [];
+    var readyFired = false;
+    var readyEventHandlersInstalled = false;
+
+    // call this when the document is ready
+    // this function protects itself against being called more than once
+    function ready() {
+        if (!readyFired) {
+            // this must be set to true before we start calling callbacks
+            readyFired = true;
+            for (var i = 0; i < readyList.length; i++) {
+                // if a callback here happens to add new ready handlers,
+                // the docReady() function will see that it already fired
+                // and will schedule the callback to run right after
+                // this event loop finishes so all handlers will still execute
+                // in order and no new ones will be added to the readyList
+                // while we are processing the list
+                readyList[i].fn.call(window, readyList[i].ctx);
+            }
+            // allow any closures held by these functions to free
+            readyList = [];
+        }
+    }
+
+    function readyStateChange() {
+        if ( document.readyState === "complete" ) {
+            ready();
+        }
+    }
+
+    // This is the one public interface
+    // docReady(fn, context);
+    // the context argument is optional - if present, it will be passed
+    // as an argument to the callback
+    baseObj[funcName] = function(callback, context) {
+        if (typeof callback !== "function") {
+            throw new TypeError("callback for docReady(fn) must be a function");
+        }
+        // if ready has already fired, then just schedule the callback
+        // to fire asynchronously, but right away
+        if (readyFired) {
+            setTimeout(function() {callback(context);}, 1);
+            return;
+        } else {
+            // add the function and context to the list
+            readyList.push({fn: callback, ctx: context});
+        }
+        // if document already ready to go, schedule the ready function to run
+        if (document.readyState === "complete") {
+            setTimeout(ready, 1);
+        } else if (!readyEventHandlersInstalled) {
+            // otherwise if we don't have event handlers installed, install them
+            if (document.addEventListener) {
+                // first choice is DOMContentLoaded event
+                document.addEventListener("DOMContentLoaded", ready, false);
+                // backup is window load event
+                window.addEventListener("load", ready, false);
+            } else {
+                // must be IE
+                document.attachEvent("onreadystatechange", readyStateChange);
+                window.attachEvent("onload", ready);
+            }
+            readyEventHandlersInstalled = true;
+        }
+    }
+})("docReady", window);
+
 Log = (function(){
 	function log(show){
 		this.begin = Date.now();
@@ -11,10 +87,82 @@ Log = (function(){
 	return log;
 })();
 
-var log = new Log(true);
+MyDB = (function(){
+        function db(database, table){
+                this.indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+                this.IDBTransaction = window.IDBTransaction || window.webkitIDBTransaction || window.msIDBTransaction;
+                this.database = database;
+                this.table = table;
+                this.request = null;
+                this.db = null;
+                this.objectStore = null;
+                this.errorFn = null;
+                this.init();
+        }
+        db.prototype.error = function(fn){
+                this.errorFn = fn;
+        }
+        db.prototype.dropDB = function(name){
+                this.indexedDB.deleteDatabase(name);
+        }
+        db.prototype.dropTable = function(name){
+                this.db.deleteObjectStore(name);
+        }
+        db.prototype.init = function(){
+                var that = this;
+                this.request = this.indexedDB.open(this.database);
+                this.request.onerror = function(event) {
+                        if(that.errorFn) that.errorFn(event);
+                };
+                this.request.onupgradeneeded = function(event) {
+                        mydb= event.target.result;
+                        if(!mydb.objectStoreNames.contains(that.table)) {
+                            var objectStore = mydb.createObjectStore(that.table, {keyPath: "id"});
+                            objectStore.createIndex("idIndex", "id", { unique: true });                             
+                        }
+                }
+        }
+        db.prototype.add = function(data){
+                //this.objectStore.delete(data.src);
+		var that = this;
+                this.request = this.indexedDB.open(this.database);
+                this.request.onsuccess = function(event) {
+                        var db = event.target.result;;
+                	var transaction = db.transaction([that.table], 'readwrite');
+                	transaction.onerror = function(event) {
+                	        if(that.errorFn) that.errorFn(event);
+                	};
+                	var objectStore = transaction.objectStore(that.table);
+                	objectStore.delete(data.id);
+                	objectStore.add(data);
+		}
+        }
+        db.prototype.get = function(key, fn){
+                var that = this;
+                this.request = this.indexedDB.open(this.database);
+                this.request.onsuccess = function(event) {
+                        var db = event.target.result;;
+                	var transaction = db.transaction([that.table], 'readwrite');
+                	transaction.onerror = function(event) {
+                	        if(that.errorFn) that.errorFn(event);
+                	};
+                	var objectStore = transaction.objectStore(that.table);
+			if(key == '*'){
+                		var records = objectStore.getAll();
+			}else{
+                		var records = objectStore.get(key);
+			}
+                	records.onerror = function(event) {
+                	        if(that.errorFn) that.errorFn(event);
+                	};
 
-log.write('begin');
-var tracker = io.connect('http://shaiii.com:8080/'+window.location.href);
+                	records.onsuccess = function(event){
+                	        fn(event.target.result);
+                	}
+                };
+        }
+        return db;
+})();
 
 var Sender = (function(){
 	function sender(channel, chunkSize){
@@ -322,7 +470,7 @@ Factory = function(){
 	//this.stun = { urls: 'stun:stun.l.google.com:19302' };
 	this.stun = { urls: 'stun:turn.shaiii.com:3478', 'credential': 'hjxhlk@123', 'username': 'shaiii' };
 	this.turn = { urls: 'turn:turn.shaiii.com:3478', 'credential': 'hjxhlk@123', 'username': 'shaiii' };
-	this.servers = { iceServers: [this.stun, this.turn]};
+	this.servers = { iceServers: [this.stun]};
 	this.DtlsSrtpKeyAgreement = { DtlsSrtpKeyAgreement: true };
 	this.optional = { optional: [this.DtlsSrtpKeyAgreement] };
 	this.list = [];
@@ -339,6 +487,7 @@ ShaiiiCDN = (function(){
 	function cdn(signal){
 		window.sources = {};
 		this.factory = new Factory();
+		this.db = new MyDB('ShaiiiCDN', 'images');
 		this.signal = signal;
 		this.token={};
 		this.listen();
@@ -357,9 +506,20 @@ ShaiiiCDN = (function(){
 		if(window.RTCPeerConnection){
 			log.write('init: remoteId ');
 			var remoteId = data.id;
-			this.help(remoteId);
 			this.token = data.token;
+			log.write('DB begin get');
+			var that = this;
+			this.db.get('*', function(data){
+				
+				var len = data.length;
+				for(i=0; i<len; i++){
+					var cache = data[i];
+					if(cache && cache.token == that.token[cache.id].hash) window.sources[cache.id] = cache.blob;
+				}
+				that.help(remoteId);
+			});	
 		}else{
+			tracker.disconnect();
 			imgs = document.querySelectorAll("[shaiii-cdn]");
 			for(i=0; i<imgs.length; i++){
 				imgs[i].src = imgs[i].getAttribute('shaiii-cdn');
@@ -371,7 +531,11 @@ ShaiiiCDN = (function(){
 	cdn.prototype.close = function(){
 		var rtcs = this.factory.list;
 		for(var key in rtcs){
-			rtcs[key].connection.close();
+			try{ 
+				rtcs[key].connection.close();
+			} catch(e){
+
+			}
 		}
 	}
 
@@ -396,23 +560,27 @@ ShaiiiCDN = (function(){
 
 		log.write('new webrtc:'+id);
 	
-		imgs = document.querySelectorAll("[shaiii-cdn]");
-		for(i=0; i<imgs.length; i++){
-			src = imgs[i].getAttribute('shaiii-cdn');
-			if(window.sources[src] == null){
-				window.sources[src] = null;
-				webrtc.createChannel(src);
+		docReady(function() {
+			var imgs = document.querySelectorAll("[shaiii-cdn]");
+			for(i=0; i<imgs.length; i++){
+				src = imgs[i].getAttribute('shaiii-cdn');
+				if(window.sources[src] == null){
+					window.sources[src] = null;
+					webrtc.createChannel(src);
+				}else{
+					imgs[i].src = URL.createObjectURL( window.sources[src] );
+				}
 			}
-		}
+
+			webrtc.offer(function(desc){
+				that.send(remoteId, {flag:'help', session: id, desc: desc});
+				log.write('send offer:');
+			});
+		});
 
 		webrtc.ice(function(candidate){
 			that.send(remoteId, {flag:'ice', session: id, desc: candidate});
 			log.write('send ice:');
-		});
-
-		webrtc.offer(function(desc){
-			that.send(remoteId, {flag:'help', session: id, desc: desc});
-			log.write('send offer:');
 		});
 		
 		webrtc.ready(function(channel){
@@ -423,9 +591,11 @@ ShaiiiCDN = (function(){
 				window.sources[name] = received;
 
 				url= URL.createObjectURL(received);
-				document.querySelector('[shaiii-cdn="'+name+'"]').src = url;
+				document.querySelectorAll('[shaiii-cdn="'+name+'"]').forEach(function(img){
+					img.src = url;
+				});
 				log.write('show pic' + name);
-
+				that.db.add({id:name, token: token.hash, blob: received});
 				channel.close();
 				log.write(name + 'closed correctly');
 			});
@@ -488,14 +658,17 @@ ShaiiiCDN = (function(){
 	}
 
 	cdn.prototype.loadFromServer = function(data){
-		var prepare = [];
-		imgs = document.querySelectorAll("[shaiii-cdn]");
-		for(i=0; i<imgs.length; i++){
-			src = imgs[i].getAttribute('shaiii-cdn');
-			this.loadUri(src);
-			prepare.push(src);
-		}
-		this.signal.emit('prepare', prepare);	
+		var that = this;
+		docReady(function() {
+			var prepare = [];
+			imgs = document.querySelectorAll("[shaiii-cdn]");
+			for(i=0; i<imgs.length; i++){
+				src = imgs[i].getAttribute('shaiii-cdn');
+				that.loadUri(src);
+				prepare.push(src);
+			}
+			that.signal.emit('prepare', prepare);
+		});	
 	}
 
 	cdn.prototype.loadUri = function(uri){
@@ -519,10 +692,12 @@ ShaiiiCDN = (function(){
 })();
 
 try{
+	var log = new Log(true);
 	var cdn;
-	document.addEventListener("DOMContentLoaded", function(event) {
-		cdn = new ShaiiiCDN(tracker);
-	});
+
+	log.write('begin');
+	cdn = new ShaiiiCDN(tracker);
+
 	window.onbeforeunload = function(){
 		cdn.close();
 	}
