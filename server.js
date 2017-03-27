@@ -19,7 +19,8 @@ function toArrayBuffer(buf) {
 }
 
 function token(domain, uri){
-	http.get(domain + uri, function(res) {
+	var url = /^(http|https):\/\//.test(uri) ? uri:(domain+uri);
+	http.get(url, function(res) {
 	  res.setEncoding('binary');
 	  var body = ''; 
 	  res.on('data', function(data){
