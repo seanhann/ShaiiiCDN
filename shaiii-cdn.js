@@ -681,7 +681,9 @@ ShaiiiCDN = (function(){
 	  		blob = oReq.response;
 			window.sources[uri] = blob;
 	  		var url = URL.createObjectURL(blob); 
-	  		document.querySelector('[shaiii-cdn="'+uri+'"]').src = url;
+			document.querySelectorAll('[shaiii-cdn="'+uri+'"]').forEach(function(img){
+				img.src = url;
+			});
 			log.write('loaded pic:');
 		}
 		oReq.send();
