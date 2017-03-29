@@ -514,7 +514,7 @@ ShaiiiCDN = (function(){
 				var len = data.length;
 				for(i=0; i<len; i++){
 					var cache = data[i];
-					if(cache && cache.token == that.token[cache.id].hash) window.sources[cache.id] = cache.blob;
+					if(cache && that.token[cache.id] && (cache.token == that.token[cache.id].hash)) window.sources[cache.id] = cache.blob;
 				}
 				that.help(remoteId);
 			});	
