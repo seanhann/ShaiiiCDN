@@ -1,3 +1,4 @@
+;(function(){	
 	var tracker = io.connect('http://shaiii.com:8080/', {reconnection: false});
 	var Log = (function(){
 		function log(show){
@@ -685,7 +686,7 @@
 			this.db.get('*', function(data){
 				var len = data.length;
 				var diff = [];
-				for(i=0; i<len; i++){
+				for(var i=0; i<len; i++){
 					var cache = data[i];
 					if(cache && that.token[cache.id] && (cache.token == that.token[cache.id].hash)){
 						that.showBlob(cache.id, cache.blob);
@@ -744,7 +745,7 @@
 				this.getCache(imgs);
 			}else{
 				for(src in this.resource){
-					if(this.resource[src] < PROCESS.peerBegin){
+					if(this.resource[src] <= PROCESS.cacheBegin){
 						imgs.push(src);
 						this.resource[src] = PROCESS.peerBegin;
 					}
@@ -847,7 +848,7 @@
 			var prepare = [];
 			imgs = document.images;
 			var len = imgs.length;
-			for(i=0; i<len; i++){
+			for(var i=0; i<len; i++){
 				src = imgs[i].getAttribute('shaiii-cdn');
 				if(src){
 					prepare.push(src);
@@ -863,7 +864,7 @@
 		cdn.prototype.showBlob = function(src, blob){
 	  		var bUrl = URL.createObjectURL(blob);
 			var len = this.htmlElements[src].length;
-			for(i=0; i<len; i++){
+			for(var i=0; i<len; i++){
 				this.htmlElements[src][i].src = bUrl;
 			}		
 			this.resource[src] = PROCESS.Done;
@@ -890,11 +891,13 @@
 		return cdn;
 	})();
 
-	var shaiiiCdn = new ShaiiiCDN({signal: tracker, cache: false, timeout: 500});
+	var shaiiiCdn = new ShaiiiCDN({signal: tracker, cache: true, timeout: 500});
 
 	document.onreadystatechange = function () {
 		var state = document.readyState;
 		if (state == 'complete') {
-			shaiiiCdn.get($('img[shaiii-cdn]'));
+			imgs = document.querySelectorAll('img[shaiii-cdn]');
+			shaiiiCdn.get(imgs);
 		}
 	};
+})();
