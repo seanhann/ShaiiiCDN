@@ -66,7 +66,7 @@
 	                	        if(that.errorFn) that.errorFn(event);
 	                	};
 	                	var objectStore = transaction.objectStore(that.table);
-	                	objectStore.delete(data.id);
+	                	objectStore['delete'](data.id);
 	                	objectStore.add(data);
 			}
 	        }
@@ -896,7 +896,10 @@
 	document.onreadystatechange = function () {
 		var state = document.readyState;
 		if (state == 'complete') {
-			imgs = document.querySelectorAll('img[shaiii-cdn]');
+			var i=0, images=document.images, len=images.length, imgs=[];
+			for(i; i<len; i++){
+				if(images[i].getAttribute('shaiii-cdn')) imgs.push(images[i]);
+			}
 			shaiiiCdn.get(imgs);
 		}
 	};
