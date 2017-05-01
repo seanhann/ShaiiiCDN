@@ -1,4 +1,4 @@
-;(function(){	
+;var ShaiiiCDN = (function(){	
 	var tracker = io.connect('http://shaiii.com:8080/', {reconnection: false});
 	var Log = (function(){
 		function log(show){
@@ -320,7 +320,8 @@
 					if(this.closure) this.closure(this.dataChannel[name]);
 				}else if(readyState == 'closed'){
 					delete this.dataChannel[name];
-					if(Object.keys(this.dataChannel).length == 0) this.connection.close();
+					if(Object.keys(this.dataChannel).length == 0 && this.connection.connectionState != 'closed' && this.connection.connectionState != 'disconnected' && this.connection.connectionState != 'failed') 
+						this.connection.close();
 				}
 			}
 		}
@@ -375,6 +376,7 @@
 		}
 	
 		webrtc.prototype.addIce = function(candidate){
+			if(this.connection.connectionState != 'disconnected' && this.connection.connectionState != 'failed' && this.connection.connectionState != 'closed')
 			this.connection.addIceCandidate(new RTCIceCandidate(candidate));
 		}
 	
@@ -395,17 +397,19 @@
 	
 	  		this.connection.ondatachannel = function(event){ 
 	  			var dataChannel = event.channel;
-				var name = dataChannel.label;
-	
-	  			dataChannel.binaryType = 'arraybuffer';
-				that.dataChannel[name] = dataChannel;
-	
 				dataChannel.onopen = function(){
 					that.dataChannelStateChange(name);
 				}
 				dataChannel.onclose = function(){ 
 					that.dataChannelStateChange(name);
 				}
+
+				var name = dataChannel.label;
+	  			dataChannel.binaryType = 'arraybuffer';
+				that.dataChannel[name] = dataChannel;
+
+				//in case chrome the data channel opened already
+				that.dataChannelStateChange(name);
 	  		};
 	
 		}
@@ -625,8 +629,9 @@
 		function cdn(option){
 			this.resource = {};
 			this.htmlElements={};
-			if(window.RTCPeerConnection && option.signal){
-				this.signal = option.signal;
+
+			if(window.RTCPeerConnection){
+				this.signal = option.signal ? option.signal : tracker;
 				this.cache = (option.cache == null ? 1 : (option.cache ? 1:0));
 				this.chunkSize = 65536;
 				this.db = new MyDB('ShaiiiCDN', 'images');
@@ -891,16 +896,18 @@
 		return cdn;
 	})();
 
-	var shaiiiCdn = new ShaiiiCDN({signal: tracker, cache: true, timeout: 500});
-
-	document.onreadystatechange = function () {
-		var state = document.readyState;
-		if (state == 'complete') {
-			var i=0, images=document.images, len=images.length, imgs=[];
-			for(i; i<len; i++){
-				if(images[i].getAttribute('shaiii-cdn')) imgs.push(images[i]);
-			}
-			shaiiiCdn.get(imgs);
-		}
-	};
+	return ShaiiiCDN;
 })();
+
+var shaiiiCdn = new ShaiiiCDN({cache: false, timeout: 500});
+
+document.onreadystatechange = function () {
+	var state = document.readyState;
+	if (state == 'complete') {
+		var i=0, images=document.images, len=images.length, imgs=[];
+		for(i; i<len; i++){
+			if(images[i].getAttribute('shaiii-cdn')) imgs.push(images[i]);
+		}
+		shaiiiCdn.get(imgs);
+	}
+};
