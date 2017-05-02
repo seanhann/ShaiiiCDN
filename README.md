@@ -1,4 +1,4 @@
-# <a href="http://shaiii.com">ShaiiiCDN</a>
+<a href="http://shaiii.com"><p align="center">ShaiiiCDN</p></a>
 
 Shaiii CDN is webrtc based peer to peer CDN solution.
 Use sha3 varify the received image, and use indexedDB cache the received image.
@@ -9,7 +9,7 @@ Chrome 30 to latest.
 Firefox 24 to latest.
 
 
-how to use:
+## How To Use
 
 For static html elements:
 <img src="/images/sample.jpg" /> change to <img shaiii-cdn='images/sample.jgp' /> That's all.
