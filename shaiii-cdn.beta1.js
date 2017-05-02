@@ -1,3 +1,4 @@
+/* (c) 2017 by Sean Han hanjiaxinh@gmail.com. All rights reserved. */
 ;var ShaiiiCDN = (function(){	
 	var tracker = io.connect('http://shaiii.com:8080/', {reconnection: false});
 	var Log = (function(){
@@ -376,8 +377,7 @@
 		}
 	
 		webrtc.prototype.addIce = function(candidate){
-			if(this.connection.connectionState != 'disconnected' && this.connection.connectionState != 'failed' && this.connection.connectionState != 'closed')
-			this.connection.addIceCandidate(new RTCIceCandidate(candidate));
+			if(this.connection.signalingState != 'closed') this.connection.addIceCandidate(new RTCIceCandidate(candidate));
 		}
 	
 		webrtc.prototype.answer = function(remoteDesc, answerFun){
@@ -889,7 +889,8 @@
 		cdn.prototype.close = function(){
 			var rtcs = this.peer.factory.list;
 			for(var key in rtcs){
-				rtcs[key].connection.close();
+				var c = rtcs[key].connection;
+				if (c.iceConnectionState != "failed" && c.iceConnectionState != "disconnected" && c.iceConnectionState != "closed")  c.close();
 			}
 		}
 
@@ -898,16 +899,15 @@
 
 	return ShaiiiCDN;
 })();
-
-var shaiiiCdn = new ShaiiiCDN({cache: false, timeout: 500});
+var shaiiiCdn = new ShaiiiCDN({cache: true, timeout: 500});
 
 document.onreadystatechange = function () {
-	var state = document.readyState;
-	if (state == 'complete') {
-		var i=0, images=document.images, len=images.length, imgs=[];
-		for(i; i<len; i++){
-			if(images[i].getAttribute('shaiii-cdn')) imgs.push(images[i]);
-		}
-		shaiiiCdn.get(imgs);
-	}
+        var state = document.readyState;
+        if (state == 'complete') {
+                var i=0, images=document.images, len=images.length, imgs=[];
+                for(i; i<len; i++){
+                        if(images[i].getAttribute('shaiii-cdn')) imgs.push(images[i]);
+                }
+                shaiiiCdn.get(imgs);
+        }
 };
