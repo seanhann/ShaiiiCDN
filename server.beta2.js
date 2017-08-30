@@ -1,7 +1,6 @@
 var io = require('socket.io')(8080);
 var http = require("http");
 var CryptoJS = require("crypto-js");
-var redis = require("redis"), client = redis.createClient();
 
 var domainPeer = {};
 var maxPeer = 2;
