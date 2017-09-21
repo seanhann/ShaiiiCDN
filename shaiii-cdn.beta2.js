@@ -1,6 +1,6 @@
 /* (c) 2017 by Sean Han hanjiaxinh@gmail.com. All rights reserved. */
 ;var ShaiiiCDN = (function(){	
-	var tracker = io.connect('http://mid.shaiii.com:8080/', {reconnection: false});
+	var tracker = io.connect('http://east.shaiii.com:8080/', {reconnection: false});
 	var Log = (function(){
 		function log(show){
 			this.begin = Date.now();

@@ -177,7 +177,6 @@
 				while( this.q.length > 0 ){
 					if(this.channel.bufferedAmount < 16744448){
 						this.channel.send(this.q.shift());
-						log.write('send block');
 					}else{
 						new Promise(function(resolve){ setTimeout(resolve, 50) });
 					}
@@ -738,11 +737,10 @@
 			}else if(this.firstUser){
 				var prepare = Object.keys(this.resource);
 				this.send(EVENTS.PREPARE, prepare);
-				this.cache = 2;
-			}else if(Object.keys(this.token).length == 0){
-				this.cache = 2;
+				this.bestGet(2);
+			}else if(Object.keys(this.token).length != 0){
+				this.bestGet(0);
 			}
-			this.bestGet(this.cache);
 		}
 
 		cdn.prototype.bestGet = function(cache){
@@ -763,7 +761,7 @@
 					}
 				}
 				if(imgs.length > 0) this.getCache(imgs);
-			}else{
+			}else if(cache == 0){
 				for(src in this.resource){
 					if(this.resource[src] <= PROCESS.cacheBegin && this.resource[src] != PROCESS.peerBegin){
 						imgs.push(src);
@@ -846,6 +844,7 @@
 					}
 				}
 				if(commit){
+					commit = false;
 					this.send(EVENTS.COMMIT, '');
 					console.log('http commit');
 				}
@@ -865,7 +864,13 @@
 
 		cdn.prototype.loadFromServer = function(){
 			log.write('load from server');
-			this.firstUser = true;
+			if(Object.keys(this.resource).length == 0){//document not ready yet
+				this.firstUser = true;
+			}else{
+				this.bestGet(2);
+				var prepare = Object.keys(this.resource);
+				this.send(EVENTS.PREPARE, prepare);
+			}
 		}
 
 		cdn.prototype.showBlob = function(src, blob){
@@ -873,7 +878,11 @@
 			var len = this.htmlElements[src] ? this.htmlElements[src].length : 0;
 			console.log(this.htmlElements[src]);
 			for(var i=0; i<len; i++){
-				this.htmlElements[src][i].src = bUrl;
+				if(this.htmlElements[src][i].src === ""){
+					this.htmlElements[src][i].src = bUrl;
+				}else{
+					this.htmlElements[src][i].href = bUrl;
+				}
 			}		
 			this.resource[src] = PROCESS.Done;
 			this.check();

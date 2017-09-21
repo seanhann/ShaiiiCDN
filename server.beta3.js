@@ -21,6 +21,7 @@ function toArrayBuffer(buf) {
 function token(domain, page, uri){
 	var url = /^(http|https):\/\//.test(uri) ? uri : ( /^\//.test(uri) ? domain+uri : page.match(/.*\//)[0]+(/\.\//.test(uri) ? uri.replace(/^\./, '') : uri) );
 	http.get(url, function(res) {
+	  res.setEncoding('binary');
 	  var body = ''; 
 	  res.on('data', function(data){
 	    body += data;
@@ -39,9 +40,9 @@ function token(domain, page, uri){
 		var wordArray = CryptoJS.lib.WordArray.create(sliced);
 		var hash = CryptoJS.SHA3(wordArray, { outputLength: 224 });
 
-		resourceToken[page][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: buffer.length, type: res.headers['content-type']};
+		resourceToken[page][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: body.length, type: res.headers['content-type']};
 		//client.sadd([domain, uri, hash.toString(CryptoJS.enc.Hex), buffer.length]);
-	  	console.log("prepare: " + domain+uri + 'size:' + buffer.length);
+	  	console.log("prepare: " + domain+uri + 'size:' + body.length);
 	  });
 	})
 	.on('error', function(e) {
