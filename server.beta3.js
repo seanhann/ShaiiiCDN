@@ -1,6 +1,10 @@
-var io = require('socket.io')(8080);
-var http = require("http");
+var fs = require("fs");
+var http = require("https");
 var CryptoJS = require("crypto-js");
+var options = {
+   key  : fs.readFileSync('/etc/ssl/private/domain.key'),
+   cert : fs.readFileSync('/etc/ssl/certs/domain.crt')
+};
 
 var domainPeer = {};
 var maxPeer = 2;
@@ -50,6 +54,11 @@ function token(domain, page, uri){
 	});
 }
 
+var server = http.createServer(options);
+var io = require('socket.io')(server);
+
+server.listen(8080);
+
 io.on('connection', function (socket) {
     	var page = socket.handshake.headers.referer;
     	var domain = socket.handshake.headers.origin;
@@ -65,6 +74,7 @@ io.on('connection', function (socket) {
 	}
 
 	socket.on(EVENTS.COMMIT, function(session){
+		console.log('commit: '+session);
 		if(!domainPeer[page][socket.id]) domainPeer[page][socket.id]={};
 		if(peerConn[socket.id] && peerConn[socket.id][session] && peerConn[peerConn[socket.id][session]][session]){
 			console.log('delete bridge: '+peerConn[peerConn[socket.id][session]][session]);
@@ -74,7 +84,6 @@ io.on('connection', function (socket) {
 			console.log('delete bridge: '+peerConn[socket.id][session]);
 			delete peerConn[socket.id][session];
 		}
-		console.log('peer left: '+domainPeer[page].length);
 	});
 
 	socket.on(EVENTS.PREPARE, function(data){
