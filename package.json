@@ -6,8 +6,8 @@
     "start": "node ./server.beta2.js"
   },
   "dependencies": {
-  	"socket.io": "latest",
-	"crypto-js": "latest",
-	"redis": "latest"
+    "crypto-js": "latest",
+    "redis": "latest",
+    "socket.io": "latest"
   }
 }

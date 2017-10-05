@@ -1,6 +1,6 @@
 /* (c) 2017 by Sean Han hanjiaxinh@gmail.com. All rights reserved. */
 ;var ShaiiiCDN = (function(){	
-	var tracker = io.connect('http://east.shaiii.com:8080/', {reconnection: false, timeout: 500});
+	var tracker = io.connect('https://shaiii.com:8080/', {reconnection: false, timeout: 500, secure: true, rejectUnauthorized: false});
 	var Log = (function(){
 		function log(show){
 			this.begin = Date.now();
@@ -911,7 +911,7 @@
 
 	return ShaiiiCDN;
 })();
-var shaiiiCdn = new ShaiiiCDN({cache:false, timeout: 500});
+var shaiiiCdn = new ShaiiiCDN({cache:false, timeout: 4000});
 
 document.onreadystatechange = function () {
         var state = document.readyState;

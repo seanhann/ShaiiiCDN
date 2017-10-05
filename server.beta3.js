@@ -1,5 +1,6 @@
 var fs = require("fs");
-var http = require("https");
+var https = require("https");
+var http = require("http");
 var CryptoJS = require("crypto-js");
 var options = {
    key  : fs.readFileSync('/etc/ssl/private/domain.key'),
@@ -13,6 +14,8 @@ var peerConn = [];
 var EVENTS = {'INIT':'init', 'COMMIT':'commit', 'HTTPLOAD': 'http', 'PREPARE': 'prepare', 'WEBRTC': 'webrtc'};
 var FLAG = {'OFFER':0, 'ANSWER':1 ,'ICE': 2,'CONFIRM':3 ,'CLOSE': 4};
 
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
 function toArrayBuffer(buf) {
     var ab = new ArrayBuffer(buf.length);
     var view = new Uint8Array(ab);
@@ -24,37 +27,38 @@ function toArrayBuffer(buf) {
 
 function token(domain, page, uri){
 	var url = /^(http|https):\/\//.test(uri) ? uri : ( /^\//.test(uri) ? domain+uri : page.match(/.*\//)[0]+(/\.\//.test(uri) ? uri.replace(/^\./, '') : uri) );
-	http.get(url, function(res) {
-	  res.setEncoding('binary');
-	  var body = ''; 
-	  res.on('data', function(data){
-	    body += data;
-	  });
-	  res.on('end', function() {
-		buffer = new Buffer(body, 'binary');
-		data = toArrayBuffer(buffer);
-		sliced = [];
-		offset = 0;
-		chunkSize = 65536;
-		while(data.byteLength > offset){
-			sliced.push( data.slice(offset, offset+chunkSize) );
-			offset += chunkSize;
-		}
+	var protocol = /^https/.test(url) ? https:http; 
+	protocol.get(url, function(res) {
+	  	res.setEncoding('binary');
+	  	var body = ''; 
+	  	res.on('data', function(data){
+	  	  body += data;
+	  	});
+	  	res.on('end', function() {
+			buffer = new Buffer(body, 'binary');
+			data = toArrayBuffer(buffer);
+			sliced = [];
+			offset = 0;
+			chunkSize = 65536;
+			while(data.byteLength > offset){
+				sliced.push( data.slice(offset, offset+chunkSize) );
+				offset += chunkSize;
+			}
 
-		var wordArray = CryptoJS.lib.WordArray.create(sliced);
-		var hash = CryptoJS.SHA3(wordArray, { outputLength: 224 });
+			var wordArray = CryptoJS.lib.WordArray.create(sliced);
+			var hash = CryptoJS.SHA3(wordArray, { outputLength: 224 });
 
-		resourceToken[page][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: body.length, type: res.headers['content-type']};
-		//client.sadd([domain, uri, hash.toString(CryptoJS.enc.Hex), buffer.length]);
-	  	console.log("prepare: " + domain+uri + 'size:' + body.length);
-	  });
+			resourceToken[page][uri] = {hash: hash.toString(CryptoJS.enc.Hex), size: body.length, type: res.headers['content-type']};
+			//client.sadd([domain, uri, hash.toString(CryptoJS.enc.Hex), buffer.length]);
+			console.log("prepare: " + domain+uri + 'size:' + body.length);
+	  	});
 	})
 	.on('error', function(e) {
-	  console.log("Got error: " + e.message);
+	  	console.log("Got error: " + e.message);
 	});
 }
 
-var server = http.createServer(options);
+var server = https.createServer(options);
 var io = require('socket.io')(server);
 
 server.listen(8080);
@@ -75,7 +79,7 @@ io.on('connection', function (socket) {
 
 	socket.on(EVENTS.COMMIT, function(session){
 		console.log('commit: '+session);
-		if(!domainPeer[page][socket.id]) domainPeer[page][socket.id]={};
+		if(!domainPeer[page][socket.id]) domainPeer[page].push(socket.id);
 		if(peerConn[socket.id] && peerConn[socket.id][session] && peerConn[peerConn[socket.id][session]][session]){
 			console.log('delete bridge: '+peerConn[peerConn[socket.id][session]][session]);
 			delete peerConn[peerConn[socket.id][session]][session];
