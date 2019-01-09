@@ -3,15 +3,16 @@ var https = require("https");
 var http = require("http");
 var CryptoJS = require("crypto-js");
 var options = {
-   key  : fs.readFileSync('/etc/ssl/private/domain.key'),
-   cert : fs.readFileSync('/etc/ssl/certs/domain.crt')
+   key  : fs.readFileSync('/etc/letsencrypt/live/shaiii.com/privkey.pem'),
+   cert : fs.readFileSync('/etc/letsencrypt/live/shaiii.com/fullchain.pem')
 };
+
 
 var domainPeer = {};
 var maxPeer = 2;
 var resourceToken = {};
 var peerConn = [];
-var EVENTS = {'INIT':'init', 'COMMIT':'commit', 'HTTPLOAD': 'http', 'PREPARE': 'prepare', 'WEBRTC': 'webrtc'};
+var EVENTS = {'INIT':'init', 'COMMIT':'commit', 'HTTPLOAD': 'http', 'PREPARE': 'prepare', 'WEBRTC': 'webrtc', 'PEERLOST': 'peerlost'};
 var FLAG = {'OFFER':0, 'ANSWER':1 ,'ICE': 2,'CONFIRM':3 ,'CLOSE': 4};
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -103,14 +104,35 @@ io.on('connection', function (socket) {
 	socket.on(EVENTS.WEBRTC, function(data){
 		if(domainPeer[page].length > 0){
 			if(!peerConn[socket.id][data.session]){
+				/*
 	    			len = domainPeer[page].length;
 	    			random = domainPeer[page][ Math.floor((Math.random() * 10) + 1)%len ];
 				peerConn[socket.id][data.session] = random;
 				if(!peerConn[random]) peerConn[random] = [];
 				peerConn[random][data.session] = socket.id;
+				*/
+                    		io.of('/').clients((error, clients)=>{
+
+				    console.log(clients);
+                    		    clients.splice(clients.indexOf(socket.id), 1);
+                    		    random = clients[Math.floor((Math.random() * 10) + 1)%clients.length];
+
+
+                    		    if(random){
+                    		        peerConn[socket.id][data.session] = random;
+                    		        if(!peerConn[random]) peerConn[random] = [];
+                    		        peerConn[random][data.session] = socket.id;
+
+					console.log(socket.id+'-->'+peerConn[socket.id][data.session]);
+        				socket.broadcast.to( peerConn[socket.id][data.session] ).emit(EVENTS.WEBRTC, data);
+                    		    }else{
+					socket.emit(EVENTS.WEBRTC, {flag: FLAG.CLOSE});
+				    }
+                    		});
+			}else{
+				console.log(socket.id+'-->'+peerConn[socket.id][data.session]);
+        			socket.broadcast.to( peerConn[socket.id][data.session] ).emit(EVENTS.WEBRTC, data);
 			}
-			console.log(socket.id+'-->'+peerConn[socket.id][data.session]);
-        		socket.broadcast.to( peerConn[socket.id][data.session] ).emit(EVENTS.WEBRTC, data);
 		}else{
 			socket.emit(EVENTS.WEBRTC, {flag: FLAG.CLOSE});
 		}

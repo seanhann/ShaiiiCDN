@@ -1,6 +1,6 @@
 /* (c) 2017 by Sean Han hanjiaxinh@gmail.com. All rights reserved. */
 ;var ShaiiiCDN = (function(){	
-	var tracker = io.connect('https://shaiii.com:8080/', {reconnection: false, timeout: 500, secure: true, rejectUnauthorized: false});
+	var tracker = io.connect('https://shaiii.com:8080/', {/*reconnection: false, timeout: 500,*/ secure: true, rejectUnauthorized: false});
 	var Log = (function(){
 		function log(show){
 			this.begin = Date.now();
@@ -17,7 +17,7 @@
 	var log = new Log(true);
 
 	var EVENTS = {'INIT':'init', 'COMMIT':'commit', 'HTTPLOAD': 'http', 'PREPARE': 'prepare', 'WEBRTC': 'webrtc', 'PEERLOST': 'peerlost'};
-	var FLAG = {'OFFER':0, 'ANSWER':1 ,'CONFIRM':2 ,'CLOSE': 3};
+	var FLAG = {'OFFER':0, 'ANSWER':1 ,'ICE': 2,'CONFIRM':3 ,'CLOSE': 4};
 	var PROCESS = {'Wait':0, 'peerBegin':1, 'cacheBegin':2, 'httpBegin':3, 'Done':4};
 	
 
